@@ -1,4 +1,611 @@
-onChange={(e) => setF("note")(e.target.value)} />
+import React, { useState, useEffect, useMemo, createContext, useContext } from "react";
+import {
+  LogOut, Calendar, User, Wallet, CreditCard, Landmark, Truck, Bike, Camera,
+  StickyNote, Receipt, TrendingUp, TrendingDown, CheckCircle2, AlertCircle,
+  Lock, ChevronRight, Package, PackageX, AlertTriangle, Plus, Trash2,
+  CalendarClock, ClipboardList, LayoutGrid, Download, Printer, Cake, Copy,
+  Check, Banknote, Phone, Building2, Mail, KeyRound, Bell, Users, RotateCcw,
+} from "lucide-react";
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from "recharts";
+
+/* ============================== SUPABASE CONFIG ============================ */
+const SUPABASE_URL = "https://htecpuzjheipbyeqwqhh.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imh0ZWNwdXpqaGVpcGJ5ZXF3cWhoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODczNzY5MzQsImV4cCI6MjEwMjk1MjkzNH0.j2gyht9oXE7d7_Az7xWh7d17_gKta2gbxQixCOc89A4";
+
+// Generic REST call (respects RLS; pass accessToken for authenticated admin calls)
+async function supaRest(path, { method = "GET", body, accessToken, prefer } = {}) {
+  const headers = {
+    apikey: SUPABASE_ANON_KEY,
+    Authorization: `Bearer ${accessToken || SUPABASE_ANON_KEY}`,
+    "Content-Type": "application/json",
+  };
+  if (prefer) headers.Prefer = prefer;
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
+    method, headers, body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.message || `Request failed (${res.status})`);
+  }
+  if (res.status === 204) return null;
+  return res.json();
+}
+
+// RPC call (functions defined in the SQL setup). anon key used unless accessToken given.
+async function supaRpc(fn, params = {}, accessToken) {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${fn}`, {
+    method: "POST",
+    headers: {
+      apikey: SUPABASE_ANON_KEY,
+      Authorization: `Bearer ${accessToken || SUPABASE_ANON_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(params),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.message || `RPC failed (${res.status})`);
+  }
+  return res.json();
+}
+
+// Supabase Auth (email/password) for company_admin / super_admin
+async function authSignUp(email, password) {
+  const res = await fetch(`${SUPABASE_URL}/auth/v1/signup`, {
+    method: "POST",
+    headers: { apikey: SUPABASE_ANON_KEY, "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.msg || data.error_description || "Sign up failed");
+  return data; // { access_token, user, ... }
+}
+async function authSignIn(email, password) {
+  const res = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
+    method: "POST",
+    headers: { apikey: SUPABASE_ANON_KEY, "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.msg || data.error_description || "Login failed");
+  return data; // { access_token, user, ... }
+}
+
+// Upload a photo file to Supabase Storage 'receipts' bucket, returns public URL
+async function uploadReceiptPhoto(file) {
+  const ext = (file.name.split(".").pop() || "jpg").toLowerCase();
+  const path = `${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
+  const res = await fetch(`${SUPABASE_URL}/storage/v1/object/receipts/${path}`, {
+    method: "POST",
+    headers: {
+      apikey: SUPABASE_ANON_KEY,
+      Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+      "Content-Type": file.type || "image/jpeg",
+    },
+    body: file,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.message || `Upload failed (${res.status})`);
+  }
+  return `${SUPABASE_URL}/storage/v1/object/public/receipts/${path}`;
+}
+
+/* ================================= THEME =================================== */
+const NAVY = "#16233F";
+const NAVY_SOFT = "#1F3864";
+const GOLD = "#C7962C";
+const GOLD_SOFT = "#F4E7C7";
+const BG = "#F5F6F8";
+const CARD = "#FFFFFF";
+const MUTED = "#6B7280";
+const DANGER = "#C0392B";
+const SUCCESS = "#1E7B4D";
+const WARNING = "#B7791F";
+const WARNING_SOFT = "#FBF0DC";
+
+const PAYMENT_METHODS = [
+  { id: "bkash", name: "bKash", number: "01880176772", color: "#E2136E" },
+  { id: "nagad", name: "Nagad", number: "01856191004", color: "#F6921E" },
+  { id: "rocket", name: "Rocket", number: "", color: "#8C3494" },
+];
+const BANK_ACCOUNTS = [];
+
+function LogoBadge({ size = 36 }) {
+  return (
+    <img
+      src="/logo.png"
+      alt="JH Management"
+      className="shrink-0"
+      style={{ width: size, height: size, borderRadius: "50%", objectFit: "cover", border: `2px solid ${GOLD}` }}
+    />
+  );
+}
+
+function GlobalStyle() {
+  return (
+    <style>{`
+      @import url('https://fonts.googleapis.com/css2?family=Sora:wght@600;700;800&family=Inter:wght@400;500;600;700&family=Tajawal:wght@500;700;800&display=swap');
+      .jh-font-display { font-family: 'Sora', 'Tajawal', sans-serif; }
+      .jh-font-body { font-family: 'Inter', 'Tajawal', sans-serif; }
+      .jh-input:focus { outline: 2px solid ${GOLD}; outline-offset: 1px; }
+      .jh-btn:focus-visible { outline: 2px solid ${GOLD}; outline-offset: 2px; }
+    `}</style>
+  );
+}
+
+function Field({ icon: Icon, label, children }) {
+  return (
+    <div className="flex flex-col gap-1">
+      <label className="jh-font-body flex items-center gap-1.5 text-xs font-semibold" style={{ color: MUTED }}>
+        {Icon && <Icon size={13} />} {label}
+      </label>
+      {children}
+    </div>
+  );
+}
+function TextInput(props) {
+  return <input {...props} className="jh-input jh-font-body w-full rounded-lg border px-3 py-2 text-sm" style={{ borderColor: "#D9DCE3", color: NAVY }} />;
+}
+function NumInput({ value, onChange, placeholder = "0.00" }) {
+  return (
+    <input type="number" inputMode="decimal" className="jh-input jh-font-body w-full rounded-lg border px-3 py-2 text-sm"
+      style={{ borderColor: "#D9DCE3", color: NAVY }} placeholder={placeholder} value={value} onChange={(e) => onChange(e.target.value)} />
+  );
+}
+function num(v) { const n = parseFloat(v); return isNaN(n) ? 0 : n; }
+function fmt(n) {
+  if (n === "" || n === null || n === undefined || isNaN(n)) return "-";
+  return Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+function todayISO() {
+  const d = new Date(); const off = d.getTimezoneOffset();
+  return new Date(d.getTime() - off * 60000).toISOString().slice(0, 10);
+}
+function daysUntil(dateStr) {
+  if (!dateStr) return null;
+  return Math.round((new Date(dateStr) - new Date(todayISO())) / 86400000);
+}
+
+/* ---------------------------- Camera Capture Field --------------------------- */
+function CameraCapture({ photo, onCapture, label = "ছবি তুলুন (Cash Mamo)", required }) {
+  const inputRef = React.useRef(null);
+  return (
+    <div className="flex flex-col gap-1">
+      <label className="jh-font-body flex items-center gap-1.5 text-xs font-semibold" style={{ color: MUTED }}>
+        <Camera size={13} /> {label} {required && <span style={{ color: DANGER }}>*</span>}
+      </label>
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        style={{ display: "none" }}
+        onChange={(e) => { const f = e.target.files?.[0]; if (f) onCapture(f); }}
+      />
+      {photo ? (
+        <div className="relative">
+          <img src={photo.preview} alt="receipt" className="w-full rounded-lg" style={{ maxHeight: 160, objectFit: "cover" }} />
+          <button type="button" onClick={() => inputRef.current?.click()}
+            className="jh-btn absolute bottom-2 right-2 text-xs font-semibold px-3 py-1.5 rounded-lg text-white" style={{ background: NAVY_SOFT }}>
+            <Camera size={13} className="inline mr-1" /> আবার তুলুন
+          </button>
+        </div>
+      ) : (
+        <button type="button" onClick={() => inputRef.current?.click()}
+          className="jh-btn w-full rounded-lg border-2 border-dashed py-4 text-sm font-semibold flex flex-col items-center gap-1.5"
+          style={{ borderColor: required ? WARNING : "#D9DCE3", color: MUTED }}>
+          <Camera size={22} /> {label}
+        </button>
+      )}
+    </div>
+  );
+}
+
+/* ============================== TRANSLATIONS =============================== */
+const STR = {
+  bn: {
+    appName: "জে এইচ ম্যানেজমেন্ট", tagline: "মাল্টি-বিজনেস ম্যানেজমেন্ট প্ল্যাটফর্ম",
+    pinLogin: "PIN দিয়ে লগইন (Store/Godown)", companyLogin: "কোম্পানি Login / Sign up",
+    enterPin: "PIN দিন", login: "Login", wrongPin: "ভুল PIN, আবার চেষ্টা করুন",
+    email: "ইমেইল", password: "পাসওয়ার্ড", companyName: "কোম্পানির নাম", whatsapp: "WhatsApp নম্বর",
+    storePin: "Store PIN (নিজে ঠিক করুন)", godownPin: "Godown PIN (নিজে ঠিক করুন)",
+    signUp: "Sign up (নতুন কোম্পানি)", haveAccount: "আগে থেকেই একাউন্ট আছে? Login করুন",
+    noAccount: "একাউন্ট নেই? Sign up করুন", back: "ফিরে যান", logout: "Logout",
+    loading: "লোড হচ্ছে...", saving: "সেভ হচ্ছে...", submit: "Submit",
+    savedOk: "✅ সফলভাবে সেভ হয়েছে", savedFail: "❌ সমস্যা হয়েছে:",
+    tabEntry: "বিক্রয় এন্ট্রি", tabInventory: "ইনভেন্টরি", tabDashboard: "Dashboard",
+    tabPayment: "সাবস্ক্রিপশন", tabPending: "অপেক্ষারত অনুমতি", tabNotices: "নোটিশ",
+    name: "নাম", date: "তারিখ", open: "OPEN", cash: "CASH", mada: "MADA", visa: "VISA",
+    master: "MASTER", hangar: "HANGAR", jahez: "JAHEZ", systemSales: "System Sales",
+    actualSales: "ACTUAL SALES", shortPlus: "SHORT/PLUS", expense: "EXPENSE", note: "NOTE",
+    recentEntries: "সাম্প্রতিক এন্ট্রি", noEntries: "কোনো এন্ট্রি নেই",
+    productName: "পণ্যের নাম", quantity: "পরিমাণ", unit: "একক", costTotal: "মোট টাকা",
+    expiryDate: "মেয়াদ শেষের তারিখ", addProduct: "পণ্য/মুভমেন্ট যোগ করুন",
+    movementType: "ধরন", purchase: "কেনা (Purchase)", transfer: "Transfer (অন্য জায়গায় পাঠানো)",
+    ret: "Return (ফেরত)", wastage: "Wastage (নষ্ট)", sale: "Sale (বিক্রি)",
+    toLocation: "কোথায় পাঠানো হচ্ছে", currentStock: "বর্তমান স্টক", noStock: "কোনো স্টক নেই",
+    pendingApprovals: "আপনার অনুমোদনের অপেক্ষায়", accept: "✅ গ্রহণ করুন (Yes)", reject: "❌ বাতিল (No)",
+    noPending: "কোনো অপেক্ষারত অনুরোধ নেই", from: "থেকে এসেছে", qty: "পরিমাণ",
+    subscriptionTitle: "সাবস্ক্রিপশন / পেমেন্ট", trialStatus: "ট্রায়াল চলছে", activeStatus: "সক্রিয়",
+    pendingPayment: "পেমেন্ট বাকি", blockedStatus: "বন্ধ আছে", dueDate: "পরবর্তী পেমেন্টের তারিখ",
+    daysLeft: "দিন বাকি", sendMoneyTo: "এই নম্বরে টাকা পাঠান", copyNumber: "কপি করুন", copied: "✅ কপি হয়েছে",
+    comingSoon: "শীঘ্রই আসছে", bankTitle: "ব্যাংক অ্যাকাউন্ট", bankComingSoon: "শীঘ্রই যোগ হবে",
+    addStore: "নতুন Store যোগ করুন", newStoreName: "নতুন Store-এর নাম", newStorePin: "নতুন PIN",
+    contactUs: "☎️ সমস্যা হলে যোগাযোগ করুন", noticesTitle: "নোটিশ", noNotices: "কোনো নোটিশ নেই",
+    postNotice: "নোটিশ পাঠান (সবাই দেখবে)", noticeTitleField: "শিরোনাম", noticeMsg: "বার্তা",
+    allCompanies: "সব কোম্পানি (Super Admin)", stockReport: "স্টক রিপোর্ট", salesReport: "বিক্রয় রিপোর্ট",
+    godownReport: "গোডাউনের হিসাব", cakeReport: "কেক হিসাব", totalValue: "মোট মূল্য",
+    company: "কোম্পানি", store: "Store", godown: "Godown", role: "ভূমিকা",
+    transferIn: "নতুন পণ্য আইছে", cashMamoPhoto: "ছবি তুলুন (Cash Mamo)",
+    cashMamoRequired: "Cash Mamo ছবি বাধ্যতামূলক", noReceiptPending: "ছবি ছাড়া — Admin অনুমোদনের অপেক্ষায় থাকবে",
+  },
+  en: {
+    appName: "J H Management", tagline: "Multi-business Management Platform",
+    pinLogin: "PIN Login (Store/Godown)", companyLogin: "Company Login / Sign up",
+    enterPin: "Enter PIN", login: "Login", wrongPin: "Wrong PIN, try again",
+    email: "Email", password: "Password", companyName: "Company Name", whatsapp: "WhatsApp Number",
+    storePin: "Store PIN (choose your own)", godownPin: "Godown PIN (choose your own)",
+    signUp: "Sign up (new company)", haveAccount: "Already have an account? Login",
+    noAccount: "No account? Sign up", back: "Back", logout: "Logout",
+    loading: "Loading...", saving: "Saving...", submit: "Submit",
+    savedOk: "✅ Saved successfully", savedFail: "❌ Error:",
+    tabEntry: "Sales Entry", tabInventory: "Inventory", tabDashboard: "Dashboard",
+    tabPayment: "Subscription", tabPending: "Pending Approvals", tabNotices: "Notices",
+    name: "Name", date: "Date", open: "OPEN", cash: "CASH", mada: "MADA", visa: "VISA",
+    master: "MASTER", hangar: "HANGAR", jahez: "JAHEZ", systemSales: "System Sales",
+    actualSales: "ACTUAL SALES", shortPlus: "SHORT/PLUS", expense: "EXPENSE", note: "NOTE",
+    recentEntries: "Recent Entries", noEntries: "No entries yet",
+    productName: "Product Name", quantity: "Quantity", unit: "Unit", costTotal: "Total Cost",
+    expiryDate: "Expiry Date", addProduct: "Add Product/Movement",
+    movementType: "Type", purchase: "Purchase", transfer: "Transfer (to another location)",
+    ret: "Return", wastage: "Wastage", sale: "Sale",
+    toLocation: "Send to", currentStock: "Current Stock", noStock: "No stock",
+    pendingApprovals: "Waiting for your approval", accept: "✅ Accept (Yes)", reject: "❌ Reject (No)",
+    noPending: "No pending requests", from: "From", qty: "Quantity",
+    subscriptionTitle: "Subscription / Payment", trialStatus: "Trial active", activeStatus: "Active",
+    pendingPayment: "Payment due", blockedStatus: "Blocked", dueDate: "Next due date",
+    daysLeft: "days left", sendMoneyTo: "Send money to this number", copyNumber: "Copy", copied: "✅ Copied",
+    comingSoon: "Coming soon", bankTitle: "Bank Account", bankComingSoon: "Coming soon",
+    addStore: "Add new Store", newStoreName: "New Store name", newStorePin: "New PIN",
+    contactUs: "☎️ Contact us for issues", noticesTitle: "Notices", noNotices: "No notices",
+    postNotice: "Post a notice (everyone sees)", noticeTitleField: "Title", noticeMsg: "Message",
+    allCompanies: "All Companies (Super Admin)", stockReport: "Stock Report", salesReport: "Sales Report",
+    godownReport: "Godown Report", cakeReport: "Cake Report", totalValue: "Total Value",
+    company: "Company", store: "Store", godown: "Godown", role: "Role",
+    transferIn: "New Stock Arrived", cashMamoPhoto: "Take Photo (Cash Mamo)",
+    cashMamoRequired: "Cash Mamo photo is required", noReceiptPending: "No photo — will wait for Admin approval",
+  },
+  ar: {
+    appName: "جي إتش للإدارة", tagline: "منصة إدارة الأعمال متعددة الشركات",
+    pinLogin: "الدخول برمز PIN", companyLogin: "دخول / تسجيل الشركة",
+    enterPin: "أدخل الرمز", login: "دخول", wrongPin: "رمز خاطئ",
+    email: "البريد الإلكتروني", password: "كلمة المرور", companyName: "اسم الشركة", whatsapp: "رقم واتساب",
+    storePin: "رمز المتجر", godownPin: "رمز المستودع",
+    signUp: "تسجيل شركة جديدة", haveAccount: "لديك حساب؟ دخول",
+    noAccount: "لا يوجد حساب؟ سجل", back: "رجوع", logout: "خروج",
+    loading: "جارٍ التحميل...", saving: "جارٍ الحفظ...", submit: "إرسال",
+    savedOk: "✅ تم الحفظ", savedFail: "❌ خطأ:",
+    tabEntry: "إدخال المبيعات", tabInventory: "المخزون", tabDashboard: "لوحة التحكم",
+    tabPayment: "الاشتراك", tabPending: "بانتظار الموافقة", tabNotices: "الإشعارات",
+    name: "الاسم", date: "التاريخ", open: "الافتتاح", cash: "نقداً", mada: "مدى", visa: "فيزا",
+    master: "ماستركارد", hangar: "هنقر", jahez: "جاهز", systemSales: "مبيعات النظام",
+    actualSales: "المبيعات الفعلية", shortPlus: "عجز/زيادة", expense: "المصروفات", note: "ملاحظة",
+    recentEntries: "الإدخالات الأخيرة", noEntries: "لا توجد إدخالات",
+    productName: "اسم المنتج", quantity: "الكمية", unit: "الوحدة", costTotal: "التكلفة الإجمالية",
+    expiryDate: "تاريخ الصلاحية", addProduct: "إضافة حركة",
+    movementType: "النوع", purchase: "شراء", transfer: "تحويل", ret: "مرتجع", wastage: "هدر", sale: "بيع",
+    toLocation: "أرسل إلى", currentStock: "المخزون الحالي", noStock: "لا يوجد مخزون",
+    pendingApprovals: "بانتظار موافقتك", accept: "✅ قبول", reject: "❌ رفض",
+    noPending: "لا توجد طلبات", from: "من", qty: "الكمية",
+    subscriptionTitle: "الاشتراك / الدفع", trialStatus: "تجربة مجانية", activeStatus: "نشط",
+    pendingPayment: "الدفع مستحق", blockedStatus: "محظور", dueDate: "تاريخ الاستحقاق",
+    daysLeft: "أيام متبقية", sendMoneyTo: "أرسل إلى هذا الرقم", copyNumber: "نسخ", copied: "✅ تم النسخ",
+    comingSoon: "قريباً", bankTitle: "حساب بنكي", bankComingSoon: "قريباً",
+    addStore: "إضافة متجر جديد", newStoreName: "اسم المتجر", newStorePin: "رمز جديد",
+    contactUs: "☎️ تواصل معنا", noticesTitle: "الإشعارات", noNotices: "لا إشعارات",
+    postNotice: "نشر إشعار", noticeTitleField: "العنوان", noticeMsg: "الرسالة",
+    allCompanies: "كل الشركات", stockReport: "تقرير المخزون", salesReport: "تقرير المبيعات",
+    godownReport: "تقرير المستودع", cakeReport: "تقرير الكيك", totalValue: "القيمة الإجمالية",
+    company: "الشركة", store: "متجر", godown: "مستودع", role: "الدور",
+    transferIn: "وصول بضاعة جديدة", cashMamoPhoto: "التقط صورة (الإيصال)",
+    cashMamoRequired: "صورة الإيصال مطلوبة", noReceiptPending: "بدون صورة — بانتظار موافقة الأدمن",
+  },
+};
+const LangContext = createContext(null);
+function useLang() { return useContext(LangContext); }
+function LangSwitcher({ compact }) {
+  const { lang, setLang } = useLang();
+  const opts = [{ k: "bn", l: "বাং" }, { k: "en", l: "EN" }, { k: "ar", l: "AR" }];
+  return (
+    <div className="flex items-center gap-1 rounded-full p-1" style={{ background: compact ? "rgba(255,255,255,0.12)" : "#EEF0F3" }}>
+      {opts.map((o) => (
+        <button key={o.k} onClick={() => setLang(o.k)} className="jh-btn text-[11px] font-bold px-2 py-1 rounded-full"
+          style={{ background: lang === o.k ? GOLD : "transparent", color: lang === o.k ? NAVY : (compact ? "white" : MUTED) }}>
+          {o.l}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/* ============================== ENTRY GATE =================================== */
+function EntryGate({ onPinMode, onCompanyMode }) {
+  const { t, lang } = useLang();
+  return (
+    <div className="min-h-screen flex items-center justify-center px-4" style={{ background: NAVY }}>
+      <GlobalStyle />
+      <div className="w-full max-w-sm">
+        <div className="flex justify-center mb-4"><LangSwitcher compact /></div>
+        <div className="flex flex-col items-center mb-8">
+          <div className="mb-4"><LogoBadge size={80} /></div>
+          <h1 className="jh-font-display text-2xl font-bold text-white tracking-tight">{t.appName}</h1>
+          <p className="jh-font-body text-sm mt-1" style={{ color: "#9AA5BD" }}>{t.tagline}</p>
+        </div>
+        <div className="rounded-2xl p-6 flex flex-col gap-3" style={{ background: CARD }}>
+          <button onClick={onPinMode} className="jh-btn jh-font-body w-full rounded-lg py-3.5 text-sm font-bold text-white flex items-center justify-center gap-2" style={{ background: NAVY_SOFT }}>
+            <KeyRound size={16} /> {t.pinLogin}
+          </button>
+          <button onClick={onCompanyMode} className="jh-btn jh-font-body w-full rounded-lg py-3.5 text-sm font-bold flex items-center justify-center gap-2 border" style={{ borderColor: GOLD, color: NAVY }}>
+            <Building2 size={16} /> {t.companyLogin}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ============================== PIN LOGIN =================================== */
+function PinLoginScreen({ onLoggedIn, onBack }) {
+  const { t } = useLang();
+  const [pin, setPin] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const submit = async () => {
+    setBusy(true); setError("");
+    try {
+      const rows = await supaRpc("verify_location_pin", { p_pin: pin });
+      if (!rows || rows.length === 0) { setError(t.wrongPin); setBusy(false); return; }
+      onLoggedIn({ pin, ...rows[0] });
+    } catch (e) {
+      setError(e.message);
+    }
+    setBusy(false);
+  };
+
+  return (
+    <div className="min-h-screen flex items-center justify-center px-4" style={{ background: NAVY }}>
+      <GlobalStyle />
+      <div className="w-full max-w-sm">
+        <div className="flex justify-center mb-4"><LangSwitcher compact /></div>
+        <div className="flex flex-col items-center mb-8"><LogoBadge size={64} /></div>
+        <div className="rounded-2xl p-6" style={{ background: CARD }}>
+          <Field icon={Lock} label={t.enterPin}>
+            <input type="password" inputMode="numeric" className="jh-input jh-font-body w-full rounded-lg border px-3 py-2.5 text-sm mt-1 tracking-widest"
+              style={{ borderColor: error ? DANGER : "#D9DCE3", color: NAVY }} placeholder="••••" value={pin}
+              onChange={(e) => { setPin(e.target.value); setError(""); }} onKeyDown={(e) => e.key === "Enter" && submit()} />
+          </Field>
+          {error && <div className="flex items-center gap-1.5 mt-3 text-xs" style={{ color: DANGER }}><AlertCircle size={13} /> {error}</div>}
+          <button onClick={submit} disabled={busy} className="jh-btn jh-font-body w-full mt-5 rounded-lg py-2.5 text-sm font-semibold text-white flex items-center justify-center gap-1.5" style={{ background: NAVY_SOFT }}>
+            {busy ? t.loading : t.login} <ChevronRight size={16} />
+          </button>
+          <button onClick={onBack} className="jh-btn w-full mt-3 text-xs font-semibold" style={{ color: MUTED }}>{t.back}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ============================== COMPANY AUTH ================================= */
+function CompanyAuthScreen({ onLoggedIn, onBack }) {
+  const { t } = useLang();
+  const [mode, setMode] = useState("login"); // login | signup
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [companyName, setCompanyName] = useState("");
+  const [whatsapp, setWhatsapp] = useState("");
+  const [storePin, setStorePin] = useState("");
+  const [godownPin, setGodownPin] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const doLogin = async () => {
+    setBusy(true); setError("");
+    try {
+      const session = await authSignIn(email, password);
+      const profiles = await supaRest(`profiles?id=eq.${session.user.id}&select=*`, { accessToken: session.access_token });
+      const profile = profiles && profiles[0];
+      onLoggedIn({ accessToken: session.access_token, user: session.user, profile });
+    } catch (e) { setError(e.message); }
+    setBusy(false);
+  };
+
+  const doSignup = async () => {
+    if (!companyName.trim() || !storePin.trim() || !godownPin.trim()) { setError(t.companyName); return; }
+    setBusy(true); setError("");
+    try {
+      const session = await authSignUp(email, password);
+      const token = session.access_token;
+      if (!token) {
+        setError("Sign up successful — check email to confirm, then Login.");
+        setBusy(false); setMode("login");
+        return;
+      }
+      await supaRpc("bootstrap_company", { p_company_name: companyName, p_whatsapp: whatsapp, p_store_pin: storePin, p_godown_pin: godownPin }, token);
+      const profiles = await supaRest(`profiles?id=eq.${session.user.id}&select=*`, { accessToken: token });
+      onLoggedIn({ accessToken: token, user: session.user, profile: profiles && profiles[0] });
+    } catch (e) { setError(e.message); }
+    setBusy(false);
+  };
+
+  return (
+    <div className="min-h-screen flex items-center justify-center px-4 py-8" style={{ background: NAVY }}>
+      <GlobalStyle />
+      <div className="w-full max-w-sm">
+        <div className="flex justify-center mb-4"><LangSwitcher compact /></div>
+        <div className="flex flex-col items-center mb-6"><LogoBadge size={64} /></div>
+        <div className="rounded-2xl p-6" style={{ background: CARD }}>
+          <div className="flex flex-col gap-3">
+            <Field icon={Mail} label={t.email}><TextInput type="email" value={email} onChange={(e) => setEmail(e.target.value)} /></Field>
+            <Field icon={Lock} label={t.password}><TextInput type="password" value={password} onChange={(e) => setPassword(e.target.value)} /></Field>
+
+            {mode === "signup" && (
+              <>
+                <Field icon={Building2} label={t.companyName}><TextInput value={companyName} onChange={(e) => setCompanyName(e.target.value)} /></Field>
+                <Field icon={Phone} label={t.whatsapp}><TextInput value={whatsapp} onChange={(e) => setWhatsapp(e.target.value)} /></Field>
+                <Field icon={KeyRound} label={t.storePin}><TextInput value={storePin} onChange={(e) => setStorePin(e.target.value)} /></Field>
+                <Field icon={KeyRound} label={t.godownPin}><TextInput value={godownPin} onChange={(e) => setGodownPin(e.target.value)} /></Field>
+              </>
+            )}
+          </div>
+
+          {error && <div className="flex items-center gap-1.5 mt-3 text-xs" style={{ color: DANGER }}><AlertCircle size={13} /> {error}</div>}
+
+          <button onClick={mode === "login" ? doLogin : doSignup} disabled={busy}
+            className="jh-btn jh-font-body w-full mt-5 rounded-lg py-2.5 text-sm font-semibold text-white flex items-center justify-center gap-1.5" style={{ background: NAVY_SOFT }}>
+            {busy ? t.loading : (mode === "login" ? t.login : t.signUp)}
+          </button>
+
+          <button onClick={() => { setMode(mode === "login" ? "signup" : "login"); setError(""); }} className="jh-btn w-full mt-3 text-xs font-semibold underline" style={{ color: NAVY }}>
+            {mode === "login" ? t.noAccount : t.haveAccount}
+          </button>
+          <button onClick={onBack} className="jh-btn w-full mt-2 text-xs font-semibold" style={{ color: MUTED }}>{t.back}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ============================== LOCATION SCREEN (Store / Godown) ============= */
+function LocationScreen({ session, onLogout }) {
+  const { t, lang } = useLang();
+  const isStore = session.location_type === "store";
+  const [tab, setTab] = useState(isStore ? "entry" : "inventory");
+
+  return (
+    <div className="min-h-screen jh-font-body" dir={lang === "ar" ? "rtl" : "ltr"} style={{ background: BG }}>
+      <GlobalStyle />
+      <div className="sticky top-0 z-10 px-5 py-4 flex items-center justify-between" style={{ background: NAVY }}>
+        <div className="flex items-center gap-2.5">
+          <LogoBadge size={36} />
+          <div>
+            <div className="jh-font-display text-white text-base font-bold leading-tight">{session.location_name}</div>
+            <div className="text-xs" style={{ color: "#9AA5BD" }}>{isStore ? t.store : t.godown}</div>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <LangSwitcher compact />
+          <button onClick={onLogout} className="jh-btn flex items-center gap-1 text-xs px-3 py-1.5 rounded-lg" style={{ color: "white", background: "rgba(255,255,255,0.12)" }}>
+            <LogOut size={13} /> {t.logout}
+          </button>
+        </div>
+      </div>
+
+      <div className="flex gap-2 px-4 pt-4 max-w-2xl mx-auto flex-wrap">
+        {isStore && (
+          <button onClick={() => setTab("entry")} className="jh-btn text-xs px-3.5 py-2 rounded-full font-semibold flex items-center gap-1.5"
+            style={{ background: tab === "entry" ? NAVY_SOFT : CARD, color: tab === "entry" ? "white" : NAVY }}>
+            <ClipboardList size={13} /> {t.tabEntry}
+          </button>
+        )}
+        <button onClick={() => setTab("inventory")} className="jh-btn text-xs px-3.5 py-2 rounded-full font-semibold flex items-center gap-1.5"
+          style={{ background: tab === "inventory" ? NAVY_SOFT : CARD, color: tab === "inventory" ? "white" : NAVY }}>
+          <Package size={13} /> {t.tabInventory}
+        </button>
+        <button onClick={() => setTab("pending")} className="jh-btn text-xs px-3.5 py-2 rounded-full font-semibold flex items-center gap-1.5"
+          style={{ background: tab === "pending" ? NAVY_SOFT : CARD, color: tab === "pending" ? "white" : NAVY }}>
+          <Bell size={13} /> {t.tabPending}
+        </button>
+      </div>
+
+      <div className="max-w-2xl mx-auto p-4 pb-20">
+        {tab === "entry" && isStore && <SalesEntryPanel pin={session.pin} />}
+        {tab === "inventory" && <InventoryPanel pin={session.pin} locationId={session.location_id} isStore={isStore} />}
+        {tab === "pending" && <PendingApprovalsPanel pin={session.pin} />}
+      </div>
+    </div>
+  );
+}
+
+/* ---------------------------- Sales Entry Panel ---------------------------- */
+function SalesEntryPanel({ pin }) {
+  const { t } = useLang();
+  const blank = { name: "", date: todayISO(), open: "", cash: "", mada: "", visa: "", master: "", hangar: "", jahez: "", systemSales: "", expense: "", note: "" };
+  const [form, setForm] = useState(blank);
+  const [entries, setEntries] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState("");
+  const [photo, setPhoto] = useState(null);
+  const handleCapture = (file) => setPhoto({ file, preview: URL.createObjectURL(file) });
+  const setF = (k) => (v) => setForm((f) => ({ ...f, [k]: v }));
+
+  const load = async () => {
+    setLoading(true);
+    try { setEntries(await supaRpc("get_sales_entries", { p_pin: pin })); }
+    catch (e) { console.error(e); }
+    setLoading(false);
+  };
+  useEffect(() => { load(); }, []);
+
+  const actualSales = num(form.cash) + num(form.mada) + num(form.visa) + num(form.master);
+  const shortPlus = form.systemSales === "" ? null : actualSales - num(form.systemSales);
+
+  const submit = async () => {
+    setSaving(true); setMsg("");
+    try {
+      let photoUrl = "";
+      if (photo?.file) photoUrl = await uploadReceiptPhoto(photo.file);
+      await supaRpc("submit_sales_entry", {
+        p_pin: pin, p_date: form.date, p_name: form.name,
+        p_open: num(form.open), p_cash: num(form.cash), p_mada: num(form.mada), p_visa: num(form.visa), p_master: num(form.master),
+        p_hangar: num(form.hangar), p_jahez: num(form.jahez), p_system_sales: num(form.systemSales), p_expense: num(form.expense),
+        p_note: form.note, p_photo: photoUrl,
+      });
+      setMsg(t.savedOk);
+      setForm({ ...blank, name: form.name });
+      setPhoto(null);
+      load();
+    } catch (e) { setMsg(`${t.savedFail} ${e.message}`); }
+    setSaving(false);
+    setTimeout(() => setMsg(""), 6000);
+  };
+
+  return (
+    <div>
+      <div className="rounded-2xl p-5" style={{ background: CARD }}>
+        <div className="grid grid-cols-2 gap-3 mb-3">
+          <Field icon={User} label={t.name}><TextInput value={form.name} onChange={(e) => setF("name")(e.target.value)} /></Field>
+          <Field icon={Calendar} label={t.date}><TextInput type="date" value={form.date} onChange={(e) => setF("date")(e.target.value)} /></Field>
+        </div>
+        <div className="grid grid-cols-2 gap-3 mb-3">
+          <Field icon={Wallet} label={t.open}><NumInput value={form.open} onChange={setF("open")} /></Field>
+          <Field icon={Wallet} label={t.cash}><NumInput value={form.cash} onChange={setF("cash")} /></Field>
+          <Field icon={CreditCard} label={t.mada}><NumInput value={form.mada} onChange={setF("mada")} /></Field>
+          <Field icon={CreditCard} label={t.visa}><NumInput value={form.visa} onChange={setF("visa")} /></Field>
+          <Field icon={Landmark} label={t.master}><NumInput value={form.master} onChange={setF("master")} /></Field>
+          <Field icon={Truck} label={t.hangar}><NumInput value={form.hangar} onChange={setF("hangar")} /></Field>
+          <Field icon={Bike} label={t.jahez}><NumInput value={form.jahez} onChange={setF("jahez")} /></Field>
+          <Field icon={Landmark} label={t.systemSales}><NumInput value={form.systemSales} onChange={setF("systemSales")} /></Field>
+        </div>
+        <div className="grid grid-cols-2 gap-3 mb-3 rounded-xl p-3" style={{ background: BG }}>
+          <div>
+            <div className="text-xs font-semibold" style={{ color: MUTED }}>{t.actualSales}</div>
+            <div className="jh-font-display text-lg font-bold" style={{ color: NAVY }}>{fmt(actualSales)}</div>
+          </div>
+          <div>
+            <div className="text-xs font-semibold" style={{ color: MUTED }}>{t.shortPlus}</div>
+            <div className="jh-font-display text-lg font-bold" style={{ color: shortPlus == null ? MUTED : shortPlus < 0 ? DANGER : SUCCESS }}>
+              {shortPlus == null ? "-" : fmt(shortPlus)}
+            </div>
+          </div>
+        </div>
+        <div className="mb-3"><Field icon={Receipt} label={t.expense}><NumInput value={form.expense} onChange={setF("expense")} /></Field></div>
+        <div className="mb-3"><CameraCapture photo={photo} onCapture={handleCapture} label={t.cashMamoPhoto} /></div>
+        <Field icon={StickyNote} label={t.note}>
+          <textarea className="jh-input jh-font-body w-full rounded-lg border px-3 py-2 text-sm" style={{ borderColor: "#D9DCE3" }} rows={2}
+            value={form.note} onChange={(e) => setF("note")(e.target.value)} />
         </Field>
         {msg && <div className="mt-3 text-sm font-medium" style={{ color: msg.startsWith("✅") ? SUCCESS : DANGER }}>{msg}</div>}
         <button onClick={submit} disabled={saving} className="jh-btn jh-font-body w-full mt-4 rounded-lg py-3 text-sm font-bold text-white flex items-center justify-center gap-2"
@@ -49,6 +656,9 @@ function InventoryPanel({ pin, locationId, isStore }) {
   const [newProductUnit, setNewProductUnit] = useState("pcs");
   const blank = { productId: "", quantity: "", totalCost: "", movementType: isStore ? "sale" : "purchase", toLocationPin: "", expiryDate: "" };
   const [form, setForm] = useState(blank);
+  const [photo, setPhoto] = useState(null);
+  const handleCapture = (file) => setPhoto({ file, preview: URL.createObjectURL(file) });
+  const needsReceipt = !isStore && (form.movementType === "purchase" || form.movementType === "transfer_in");
 
   const load = async () => {
     setLoading(true);
@@ -78,6 +688,7 @@ function InventoryPanel({ pin, locationId, isStore }) {
     setMsg("");
     if (!form.productId) { setMsg(t.productName); return; }
     if (num(form.quantity) <= 0) { setMsg(t.quantity); return; }
+    if (needsReceipt && !photo) { setMsg(t.cashMamoRequired); return; }
     try {
       const needsTarget = form.movementType === "transfer" || form.movementType === "ret";
       let toLoc = null;
@@ -86,6 +697,12 @@ function InventoryPanel({ pin, locationId, isStore }) {
         if (!rows || rows.length === 0) { setMsg(t.wrongPin); return; }
         toLoc = rows[0].location_id;
       }
+      let photoUrl = "";
+      if (photo?.file) photoUrl = await uploadReceiptPhoto(photo.file);
+      const movementTypeForDb =
+        form.movementType === "ret" ? "return" :
+        form.movementType === "transfer_in" ? "purchase" :
+        form.movementType;
       await supaRpc("submit_stock_movement", {
         p_pin: pin,
         p_from_location: locationId,
@@ -94,10 +711,12 @@ function InventoryPanel({ pin, locationId, isStore }) {
         p_quantity: num(form.quantity),
         p_total_cost: num(form.totalCost),
         p_expiry_date: form.expiryDate || null,
-        p_movement_type: form.movementType === "ret" ? "return" : form.movementType,
+        p_movement_type: movementTypeForDb,
+        p_receipt_url: photoUrl,
       });
       setMsg(t.savedOk);
       setForm(blank);
+      setPhoto(null);
       load();
     } catch (e) { setMsg(`${t.savedFail} ${e.message}`); }
     setTimeout(() => setMsg(""), 6000);
@@ -163,7 +782,9 @@ function InventoryPanel({ pin, locationId, isStore }) {
               ) : (
                 <>
                   <option value="purchase">{t.purchase}</option>
+                  <option value="transfer_in">{t.transferIn}</option>
                   <option value="transfer">{t.transfer}</option>
+                  <option value="ret">{t.ret}</option>
                   <option value="wastage">{t.wastage}</option>
                 </>
               )}
@@ -171,13 +792,19 @@ function InventoryPanel({ pin, locationId, isStore }) {
           </Field>
           <Field label={t.quantity}><NumInput value={form.quantity} onChange={(v) => setForm((f) => ({ ...f, quantity: v }))} /></Field>
         </div>
-        {!isStore && form.movementType === "purchase" && (
+        {!isStore && (form.movementType === "purchase" || form.movementType === "transfer_in") && (
           <div className="mb-3"><Field label={t.costTotal}><NumInput value={form.totalCost} onChange={(v) => setForm((f) => ({ ...f, totalCost: v }))} /></Field></div>
         )}
         {(form.movementType === "transfer" || form.movementType === "ret") && (
           <div className="mb-3"><Field icon={KeyRound} label={t.toLocation}><TextInput value={form.toLocationPin} onChange={(e) => setForm((f) => ({ ...f, toLocationPin: e.target.value }))} placeholder="PIN" /></Field></div>
         )}
         <div className="mb-3"><Field icon={CalendarClock} label={t.expiryDate}><TextInput type="date" value={form.expiryDate} onChange={(e) => setForm((f) => ({ ...f, expiryDate: e.target.value }))} /></Field></div>
+        {!isStore && (
+          <div className="mb-3">
+            <CameraCapture photo={photo} onCapture={handleCapture} label={t.cashMamoPhoto} required={needsReceipt} />
+            {needsReceipt && !photo && <div className="text-[11px] mt-1" style={{ color: WARNING }}>{t.noReceiptPending}</div>}
+          </div>
+        )}
         {msg && <div className="text-sm font-medium mb-3" style={{ color: msg.startsWith("✅") ? SUCCESS : DANGER }}>{msg}</div>}
         <button onClick={submit} className="jh-btn jh-font-body w-full rounded-lg py-2.5 text-sm font-bold text-white flex items-center justify-center gap-1.5" style={{ background: NAVY_SOFT }}>
           <Plus size={15} /> {t.addProduct}
