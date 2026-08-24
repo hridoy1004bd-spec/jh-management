@@ -5,6 +5,7 @@ import {
   Lock, ChevronRight, Package, PackageX, AlertTriangle, Plus, Trash2,
   CalendarClock, ClipboardList, LayoutGrid, Download, Printer, Cake, Copy,
   Check, Banknote, Phone, Building2, Mail, KeyRound, Bell, Users, RotateCcw,
+  Menu, X, Settings, MessageCircle, ArrowLeftRight, FileBarChart2,
 } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from "recharts";
 
@@ -862,13 +863,180 @@ function PendingApprovalsPanel({ pin }) {
   );
 }
 
+/* ============================== ADMIN SIDEBAR ================================ */
+function useMenuItems(t, isSuperAdmin) {
+  return useMemo(() => ([
+    { key: "dashboard", label: t.tabDashboard, icon: LayoutGrid },
+    { key: "locations", label: `${t.store} / ${t.godown}`, icon: Building2 },
+    { key: "transfers", label: t.transfer, icon: ArrowLeftRight },
+    { key: "returns", label: t.ret, icon: RotateCcw },
+    { key: "wastage", label: t.wastage, icon: AlertTriangle },
+    { key: "cake", label: t.cakeReport, icon: Cake },
+    { key: "reports", label: t.stockReport, icon: FileBarChart2 },
+    ...(isSuperAdmin ? [{ key: "companies", label: t.allCompanies, icon: Users }] : []),
+    { key: "payment", label: t.tabPayment, icon: Banknote },
+    { key: "notices", label: t.tabNotices, icon: Bell },
+    { key: "users", label: "Users", icon: Users },
+    { key: "settings", label: "Settings", icon: Settings },
+    { key: "support", label: t.contactUs, icon: MessageCircle },
+  ]), [t, isSuperAdmin]);
+}
+
+function Sidebar({ open, onClose, items, activeTab, onSelect }) {
+  return (
+    <>
+      {open && (
+        <div className="fixed inset-0 z-30" style={{ background: "rgba(0,0,0,0.45)" }} onClick={onClose} />
+      )}
+      <div className="fixed top-0 left-0 h-full z-40 transition-transform duration-200"
+        style={{ width: 260, background: CARD, transform: open ? "translateX(0)" : "translateX(-100%)", boxShadow: open ? "4px 0 20px rgba(0,0,0,0.15)" : "none" }}>
+        <div className="flex items-center justify-between px-4 py-4" style={{ background: NAVY }}>
+          <div className="flex items-center gap-2"><LogoBadge size={30} /><span className="jh-font-display text-white text-sm font-bold">Menu</span></div>
+          <button onClick={onClose} className="jh-btn text-white"><X size={20} /></button>
+        </div>
+        <div className="overflow-y-auto" style={{ maxHeight: "calc(100vh - 64px)" }}>
+          {items.map((item) => {
+            const Icon = item.icon;
+            const active = activeTab === item.key;
+            return (
+              <button key={item.key} onClick={() => { onSelect(item.key); onClose(); }}
+                className="jh-btn w-full flex items-center gap-3 px-4 py-3 text-sm font-semibold text-left border-b"
+                style={{ background: active ? GOLD_SOFT : "transparent", color: active ? NAVY : "#333", borderColor: "#F0F1F3" }}>
+                <Icon size={17} style={{ color: active ? GOLD : MUTED }} /> {item.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </>
+  );
+}
+
+function ComingSoonCard({ label }) {
+  const { t } = useLang();
+  return (
+    <div className="rounded-2xl p-8 flex flex-col items-center text-center gap-2" style={{ background: CARD }}>
+      <AlertCircle size={28} style={{ color: MUTED }} />
+      <div className="jh-font-display text-sm font-bold" style={{ color: NAVY }}>{label}</div>
+      <div className="text-xs" style={{ color: MUTED }}>{t.comingSoon}</div>
+    </div>
+  );
+}
+
+function SupportTab() {
+  const { t } = useLang();
+  const waNumber = "8801856191004";
+  return (
+    <div className="rounded-2xl p-5" style={{ background: CARD }}>
+      <h2 className="jh-font-display text-sm font-bold mb-3" style={{ color: NAVY }}>{t.contactUs}</h2>
+      <a href={`https://wa.me/${waNumber}`} target="_blank" rel="noreferrer"
+        className="jh-btn w-full rounded-lg py-3 text-sm font-bold text-white flex items-center justify-center gap-2" style={{ background: "#1E7B4D" }}>
+        <MessageCircle size={16} /> WhatsApp
+      </a>
+    </div>
+  );
+}
+
+function LocationsTab({ session, companyId }) {
+  const { t } = useLang();
+  const [locations, setLocations] = useState([]);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    if (!companyId) { setLoading(false); return; }
+    supaRest(`locations?company_id=eq.${companyId}&select=*`, { accessToken: session.accessToken })
+      .then(setLocations).catch(console.error).finally(() => setLoading(false));
+  }, [companyId]);
+  if (!companyId) return <div className="text-sm p-6 text-center" style={{ color: MUTED }}>{t.company}</div>;
+  if (loading) return <div className="text-sm p-6 text-center" style={{ color: MUTED }}>{t.loading}</div>;
+  return (
+    <div className="rounded-2xl p-5" style={{ background: CARD }}>
+      <h2 className="jh-font-display text-sm font-bold mb-3" style={{ color: NAVY }}>{t.store} / {t.godown}</h2>
+      {locations.length === 0 ? <div className="text-sm" style={{ color: MUTED }}>{t.noEntries}</div> : (
+        <div className="flex flex-col gap-2">
+          {locations.map((l) => (
+            <div key={l.id} className="rounded-lg px-3 py-2.5 flex items-center justify-between" style={{ background: BG }}>
+              <div className="jh-font-display text-sm font-bold" style={{ color: NAVY }}>{l.name}</div>
+              <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full" style={{ background: l.type === "store" ? "#E4F2EA" : GOLD_SOFT, color: l.type === "store" ? SUCCESS : "#8A6A17" }}>
+                {l.type === "store" ? t.store : t.godown}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MovementTypeTab({ session, companyId, movementType, label }) {
+  const { t } = useLang();
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    if (!companyId) { setLoading(false); return; }
+    supaRest(`stock_movements?company_id=eq.${companyId}&movement_type=eq.${movementType}&select=*,products(name)&order=created_at.desc&limit=100`, { accessToken: session.accessToken })
+      .then(setRows).catch(console.error).finally(() => setLoading(false));
+  }, [companyId, movementType]);
+  if (!companyId) return <div className="text-sm p-6 text-center" style={{ color: MUTED }}>{t.company}</div>;
+  if (loading) return <div className="text-sm p-6 text-center" style={{ color: MUTED }}>{t.loading}</div>;
+  return (
+    <div className="rounded-2xl p-5" style={{ background: CARD }}>
+      <h2 className="jh-font-display text-sm font-bold mb-3" style={{ color: NAVY }}>{label}</h2>
+      {rows.length === 0 ? <div className="text-sm" style={{ color: MUTED }}>{t.noEntries}</div> : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead><tr style={{ color: MUTED }}>
+              <th className="text-left pb-2 font-semibold">{t.productName}</th>
+              <th className="text-right pb-2 font-semibold">{t.qty}</th>
+              <th className="text-right pb-2 font-semibold">{t.costTotal}</th>
+              <th className="text-left pb-2 font-semibold">{t.date}</th>
+            </tr></thead>
+            <tbody>
+              {rows.map((m) => (
+                <tr key={m.id} className="border-t" style={{ borderColor: "#EEF0F3" }}>
+                  <td className="py-2" style={{ color: NAVY }}>{m.products?.name}</td>
+                  <td className="py-2 text-right" style={{ color: NAVY }}>{fmt(m.quantity)}</td>
+                  <td className="py-2 text-right" style={{ color: NAVY }}>{fmt(m.total_cost)}</td>
+                  <td className="py-2" style={{ color: MUTED }}>{m.created_at?.slice(0, 10)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CompaniesListTab({ companies, activeCompanyId, onSelect }) {
+  const { t } = useLang();
+  return (
+    <div className="rounded-2xl p-5" style={{ background: CARD }}>
+      <h2 className="jh-font-display text-sm font-bold mb-3" style={{ color: NAVY }}>{t.allCompanies}</h2>
+      {companies.length === 0 ? <div className="text-sm" style={{ color: MUTED }}>{t.noEntries}</div> : (
+        <div className="flex flex-col gap-2">
+          {companies.map((c) => (
+            <button key={c.id} onClick={() => onSelect(c.id)} className="jh-btn w-full text-left rounded-lg px-3 py-2.5 flex items-center justify-between"
+              style={{ background: activeCompanyId === c.id ? GOLD_SOFT : BG }}>
+              <span className="jh-font-display text-sm font-bold" style={{ color: NAVY }}>{c.name}</span>
+              <ChevronRight size={15} style={{ color: MUTED }} />
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ============================== ADMIN SCREEN ================================ */
 function AdminScreen({ session, onLogout }) {
   const { t, lang } = useLang();
   const [tab, setTab] = useState("dashboard");
+  const [menuOpen, setMenuOpen] = useState(false);
   const isSuperAdmin = session.profile?.role === "super_admin";
   const [companies, setCompanies] = useState([]);
   const [activeCompanyId, setActiveCompanyId] = useState(session.profile?.company_id || null);
+  const menuItems = useMenuItems(t, isSuperAdmin);
+  const activeLabel = menuItems.find((m) => m.key === tab)?.label || t.tabDashboard;
 
   useEffect(() => {
     if (isSuperAdmin) {
@@ -876,14 +1044,18 @@ function AdminScreen({ session, onLogout }) {
     }
   }, [isSuperAdmin]);
 
+  const companyId = isSuperAdmin ? activeCompanyId : session.profile?.company_id;
+
   return (
     <div className="min-h-screen jh-font-body" dir={lang === "ar" ? "rtl" : "ltr"} style={{ background: BG }}>
       <GlobalStyle />
+      <Sidebar open={menuOpen} onClose={() => setMenuOpen(false)} items={menuItems} activeTab={tab} onSelect={setTab} />
       <div className="sticky top-0 z-10 px-5 py-4 flex items-center justify-between" style={{ background: NAVY }}>
         <div className="flex items-center gap-2.5">
+          <button onClick={() => setMenuOpen(true)} className="jh-btn text-white mr-1"><Menu size={22} /></button>
           <LogoBadge size={36} />
           <div>
-            <div className="jh-font-display text-white text-base font-bold leading-tight">{t.tabDashboard}</div>
+            <div className="jh-font-display text-white text-base font-bold leading-tight">{activeLabel}</div>
             <div className="text-xs" style={{ color: "#9AA5BD" }}>{isSuperAdmin ? t.allCompanies : t.company}</div>
           </div>
         </div>
@@ -895,7 +1067,7 @@ function AdminScreen({ session, onLogout }) {
         </div>
       </div>
 
-      {isSuperAdmin && (
+      {isSuperAdmin && tab !== "companies" && (
         <div className="px-4 pt-4 max-w-4xl mx-auto">
           <select className="jh-input jh-font-body w-full rounded-lg border px-3 py-2 text-sm" style={{ borderColor: "#D9DCE3", background: CARD }}
             value={activeCompanyId || ""} onChange={(e) => setActiveCompanyId(e.target.value)}>
@@ -905,19 +1077,20 @@ function AdminScreen({ session, onLogout }) {
         </div>
       )}
 
-      <div className="flex gap-2 px-4 pt-4 max-w-4xl mx-auto flex-wrap">
-        <button onClick={() => setTab("dashboard")} className="jh-btn text-xs px-3.5 py-2 rounded-full font-semibold flex items-center gap-1.5"
-          style={{ background: tab === "dashboard" ? NAVY_SOFT : CARD, color: tab === "dashboard" ? "white" : NAVY }}><LayoutGrid size={13} /> {t.tabDashboard}</button>
-        <button onClick={() => setTab("payment")} className="jh-btn text-xs px-3.5 py-2 rounded-full font-semibold flex items-center gap-1.5"
-          style={{ background: tab === "payment" ? NAVY_SOFT : CARD, color: tab === "payment" ? "white" : NAVY }}><Banknote size={13} /> {t.tabPayment}</button>
-        <button onClick={() => setTab("notices")} className="jh-btn text-xs px-3.5 py-2 rounded-full font-semibold flex items-center gap-1.5"
-          style={{ background: tab === "notices" ? NAVY_SOFT : CARD, color: tab === "notices" ? "white" : NAVY }}><Bell size={13} /> {t.tabNotices}</button>
-      </div>
-
       <div className="max-w-4xl mx-auto p-4 pb-20">
-        {tab === "dashboard" && <AdminDashboardTab session={session} companyId={isSuperAdmin ? activeCompanyId : session.profile?.company_id} isSuperAdmin={isSuperAdmin} />}
+        {tab === "dashboard" && <AdminDashboardTab session={session} companyId={companyId} isSuperAdmin={isSuperAdmin} />}
+        {tab === "locations" && <LocationsTab session={session} companyId={companyId} />}
+        {tab === "transfers" && <MovementTypeTab session={session} companyId={companyId} movementType="transfer" label={t.transfer} />}
+        {tab === "returns" && <MovementTypeTab session={session} companyId={companyId} movementType="return" label={t.ret} />}
+        {tab === "wastage" && <MovementTypeTab session={session} companyId={companyId} movementType="wastage" label={t.wastage} />}
+        {tab === "cake" && <ComingSoonCard label={t.cakeReport} />}
+        {tab === "reports" && <AdminDashboardTab session={session} companyId={companyId} isSuperAdmin={isSuperAdmin} />}
+        {tab === "companies" && isSuperAdmin && <CompaniesListTab companies={companies} activeCompanyId={activeCompanyId} onSelect={(id) => { setActiveCompanyId(id); setTab("dashboard"); }} />}
         {tab === "payment" && <SubscriptionTab session={session} companyId={session.profile?.company_id} />}
         {tab === "notices" && <NoticesTab session={session} isSuperAdmin={isSuperAdmin} />}
+        {tab === "users" && <ComingSoonCard label="Users" />}
+        {tab === "settings" && <ComingSoonCard label="Settings" />}
+        {tab === "support" && <SupportTab />}
       </div>
     </div>
   );
