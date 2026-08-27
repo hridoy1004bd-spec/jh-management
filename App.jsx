@@ -5,7 +5,6 @@ import {
   Lock, ChevronRight, Package, PackageX, AlertTriangle, Plus, Trash2,
   CalendarClock, ClipboardList, LayoutGrid, Download, Printer, Cake, Copy,
   Check, Banknote, Phone, Building2, Mail, KeyRound, Bell, Users, RotateCcw,
-  Menu, X, Settings, MessageCircle, ArrowLeftRight, FileBarChart2,
 } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from "recharts";
 
@@ -72,26 +71,6 @@ async function authSignIn(email, password) {
   return data; // { access_token, user, ... }
 }
 
-// Upload a photo file to Supabase Storage 'receipts' bucket, returns public URL
-async function uploadReceiptPhoto(file) {
-  const ext = (file.name.split(".").pop() || "jpg").toLowerCase();
-  const path = `${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
-  const res = await fetch(`${SUPABASE_URL}/storage/v1/object/receipts/${path}`, {
-    method: "POST",
-    headers: {
-      apikey: SUPABASE_ANON_KEY,
-      Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-      "Content-Type": file.type || "image/jpeg",
-    },
-    body: file,
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.message || `Upload failed (${res.status})`);
-  }
-  return `${SUPABASE_URL}/storage/v1/object/public/receipts/${path}`;
-}
-
 /* ================================= THEME =================================== */
 const NAVY = "#16233F";
 const NAVY_SOFT = "#1F3864";
@@ -114,12 +93,10 @@ const BANK_ACCOUNTS = [];
 
 function LogoBadge({ size = 36 }) {
   return (
-    <img
-      src="/logo.png"
-      alt="JH Management"
-      className="shrink-0"
-      style={{ width: size, height: size, borderRadius: "50%", objectFit: "cover", border: `2px solid ${GOLD}` }}
-    />
+    <div className="jh-font-display flex items-center justify-center rounded-full font-bold shrink-0"
+         style={{ width: size, height: size, background: GOLD, color: NAVY, fontSize: size * 0.4, border: `2px solid ${GOLD}` }}>
+      JH
+    </div>
   );
 }
 
@@ -168,41 +145,6 @@ function daysUntil(dateStr) {
   return Math.round((new Date(dateStr) - new Date(todayISO())) / 86400000);
 }
 
-/* ---------------------------- Camera Capture Field --------------------------- */
-function CameraCapture({ photo, onCapture, label = "ছবি তুলুন (Cash Mamo)", required }) {
-  const inputRef = React.useRef(null);
-  return (
-    <div className="flex flex-col gap-1">
-      <label className="jh-font-body flex items-center gap-1.5 text-xs font-semibold" style={{ color: MUTED }}>
-        <Camera size={13} /> {label} {required && <span style={{ color: DANGER }}>*</span>}
-      </label>
-      <input
-        ref={inputRef}
-        type="file"
-        accept="image/*"
-        capture="environment"
-        style={{ display: "none" }}
-        onChange={(e) => { const f = e.target.files?.[0]; if (f) onCapture(f); }}
-      />
-      {photo ? (
-        <div className="relative">
-          <img src={photo.preview} alt="receipt" className="w-full rounded-lg" style={{ maxHeight: 160, objectFit: "cover" }} />
-          <button type="button" onClick={() => inputRef.current?.click()}
-            className="jh-btn absolute bottom-2 right-2 text-xs font-semibold px-3 py-1.5 rounded-lg text-white" style={{ background: NAVY_SOFT }}>
-            <Camera size={13} className="inline mr-1" /> আবার তুলুন
-          </button>
-        </div>
-      ) : (
-        <button type="button" onClick={() => inputRef.current?.click()}
-          className="jh-btn w-full rounded-lg border-2 border-dashed py-4 text-sm font-semibold flex flex-col items-center gap-1.5"
-          style={{ borderColor: required ? WARNING : "#D9DCE3", color: MUTED }}>
-          <Camera size={22} /> {label}
-        </button>
-      )}
-    </div>
-  );
-}
-
 /* ============================== TRANSLATIONS =============================== */
 const STR = {
   bn: {
@@ -238,8 +180,6 @@ const STR = {
     allCompanies: "সব কোম্পানি (Super Admin)", stockReport: "স্টক রিপোর্ট", salesReport: "বিক্রয় রিপোর্ট",
     godownReport: "গোডাউনের হিসাব", cakeReport: "কেক হিসাব", totalValue: "মোট মূল্য",
     company: "কোম্পানি", store: "Store", godown: "Godown", role: "ভূমিকা",
-    transferIn: "নতুন পণ্য আইছে", cashMamoPhoto: "ছবি তুলুন (Cash Mamo)",
-    cashMamoRequired: "Cash Mamo ছবি বাধ্যতামূলক", noReceiptPending: "ছবি ছাড়া — Admin অনুমোদনের অপেক্ষায় থাকবে",
   },
   en: {
     appName: "J H Management", tagline: "Multi-business Management Platform",
@@ -274,8 +214,6 @@ const STR = {
     allCompanies: "All Companies (Super Admin)", stockReport: "Stock Report", salesReport: "Sales Report",
     godownReport: "Godown Report", cakeReport: "Cake Report", totalValue: "Total Value",
     company: "Company", store: "Store", godown: "Godown", role: "Role",
-    transferIn: "New Stock Arrived", cashMamoPhoto: "Take Photo (Cash Mamo)",
-    cashMamoRequired: "Cash Mamo photo is required", noReceiptPending: "No photo — will wait for Admin approval",
   },
   ar: {
     appName: "جي إتش للإدارة", tagline: "منصة إدارة الأعمال متعددة الشركات",
@@ -309,8 +247,6 @@ const STR = {
     allCompanies: "كل الشركات", stockReport: "تقرير المخزون", salesReport: "تقرير المبيعات",
     godownReport: "تقرير المستودع", cakeReport: "تقرير الكيك", totalValue: "القيمة الإجمالية",
     company: "الشركة", store: "متجر", godown: "مستودع", role: "الدور",
-    transferIn: "وصول بضاعة جديدة", cashMamoPhoto: "التقط صورة (الإيصال)",
-    cashMamoRequired: "صورة الإيصال مطلوبة", noReceiptPending: "بدون صورة — بانتظار موافقة الأدمن",
   },
 };
 const LangContext = createContext(null);
@@ -538,8 +474,6 @@ function SalesEntryPanel({ pin }) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState("");
-  const [photo, setPhoto] = useState(null);
-  const handleCapture = (file) => setPhoto({ file, preview: URL.createObjectURL(file) });
   const setF = (k) => (v) => setForm((f) => ({ ...f, [k]: v }));
 
   const load = async () => {
@@ -556,17 +490,14 @@ function SalesEntryPanel({ pin }) {
   const submit = async () => {
     setSaving(true); setMsg("");
     try {
-      let photoUrl = "";
-      if (photo?.file) photoUrl = await uploadReceiptPhoto(photo.file);
       await supaRpc("submit_sales_entry", {
         p_pin: pin, p_date: form.date, p_name: form.name,
         p_open: num(form.open), p_cash: num(form.cash), p_mada: num(form.mada), p_visa: num(form.visa), p_master: num(form.master),
         p_hangar: num(form.hangar), p_jahez: num(form.jahez), p_system_sales: num(form.systemSales), p_expense: num(form.expense),
-        p_note: form.note, p_photo: photoUrl,
+        p_note: form.note, p_photo: "",
       });
       setMsg(t.savedOk);
       setForm({ ...blank, name: form.name });
-      setPhoto(null);
       load();
     } catch (e) { setMsg(`${t.savedFail} ${e.message}`); }
     setSaving(false);
@@ -603,7 +534,6 @@ function SalesEntryPanel({ pin }) {
           </div>
         </div>
         <div className="mb-3"><Field icon={Receipt} label={t.expense}><NumInput value={form.expense} onChange={setF("expense")} /></Field></div>
-        <div className="mb-3"><CameraCapture photo={photo} onCapture={handleCapture} label={t.cashMamoPhoto} /></div>
         <Field icon={StickyNote} label={t.note}>
           <textarea className="jh-input jh-font-body w-full rounded-lg border px-3 py-2 text-sm" style={{ borderColor: "#D9DCE3" }} rows={2}
             value={form.note} onChange={(e) => setF("note")(e.target.value)} />
@@ -657,9 +587,6 @@ function InventoryPanel({ pin, locationId, isStore }) {
   const [newProductUnit, setNewProductUnit] = useState("pcs");
   const blank = { productId: "", quantity: "", totalCost: "", movementType: isStore ? "sale" : "purchase", toLocationPin: "", expiryDate: "" };
   const [form, setForm] = useState(blank);
-  const [photo, setPhoto] = useState(null);
-  const handleCapture = (file) => setPhoto({ file, preview: URL.createObjectURL(file) });
-  const needsReceipt = !isStore && (form.movementType === "purchase" || form.movementType === "transfer_in");
 
   const load = async () => {
     setLoading(true);
@@ -689,7 +616,6 @@ function InventoryPanel({ pin, locationId, isStore }) {
     setMsg("");
     if (!form.productId) { setMsg(t.productName); return; }
     if (num(form.quantity) <= 0) { setMsg(t.quantity); return; }
-    if (needsReceipt && !photo) { setMsg(t.cashMamoRequired); return; }
     try {
       const needsTarget = form.movementType === "transfer" || form.movementType === "ret";
       let toLoc = null;
@@ -698,12 +624,6 @@ function InventoryPanel({ pin, locationId, isStore }) {
         if (!rows || rows.length === 0) { setMsg(t.wrongPin); return; }
         toLoc = rows[0].location_id;
       }
-      let photoUrl = "";
-      if (photo?.file) photoUrl = await uploadReceiptPhoto(photo.file);
-      const movementTypeForDb =
-        form.movementType === "ret" ? "return" :
-        form.movementType === "transfer_in" ? "purchase" :
-        form.movementType;
       await supaRpc("submit_stock_movement", {
         p_pin: pin,
         p_from_location: locationId,
@@ -712,12 +632,10 @@ function InventoryPanel({ pin, locationId, isStore }) {
         p_quantity: num(form.quantity),
         p_total_cost: num(form.totalCost),
         p_expiry_date: form.expiryDate || null,
-        p_movement_type: movementTypeForDb,
-        p_receipt_url: photoUrl,
+        p_movement_type: form.movementType === "ret" ? "return" : form.movementType,
       });
       setMsg(t.savedOk);
       setForm(blank);
-      setPhoto(null);
       load();
     } catch (e) { setMsg(`${t.savedFail} ${e.message}`); }
     setTimeout(() => setMsg(""), 6000);
@@ -783,9 +701,7 @@ function InventoryPanel({ pin, locationId, isStore }) {
               ) : (
                 <>
                   <option value="purchase">{t.purchase}</option>
-                  <option value="transfer_in">{t.transferIn}</option>
                   <option value="transfer">{t.transfer}</option>
-                  <option value="ret">{t.ret}</option>
                   <option value="wastage">{t.wastage}</option>
                 </>
               )}
@@ -793,19 +709,13 @@ function InventoryPanel({ pin, locationId, isStore }) {
           </Field>
           <Field label={t.quantity}><NumInput value={form.quantity} onChange={(v) => setForm((f) => ({ ...f, quantity: v }))} /></Field>
         </div>
-        {!isStore && (form.movementType === "purchase" || form.movementType === "transfer_in") && (
+        {!isStore && form.movementType === "purchase" && (
           <div className="mb-3"><Field label={t.costTotal}><NumInput value={form.totalCost} onChange={(v) => setForm((f) => ({ ...f, totalCost: v }))} /></Field></div>
         )}
         {(form.movementType === "transfer" || form.movementType === "ret") && (
           <div className="mb-3"><Field icon={KeyRound} label={t.toLocation}><TextInput value={form.toLocationPin} onChange={(e) => setForm((f) => ({ ...f, toLocationPin: e.target.value }))} placeholder="PIN" /></Field></div>
         )}
         <div className="mb-3"><Field icon={CalendarClock} label={t.expiryDate}><TextInput type="date" value={form.expiryDate} onChange={(e) => setForm((f) => ({ ...f, expiryDate: e.target.value }))} /></Field></div>
-        {!isStore && (
-          <div className="mb-3">
-            <CameraCapture photo={photo} onCapture={handleCapture} label={t.cashMamoPhoto} required={needsReceipt} />
-            {needsReceipt && !photo && <div className="text-[11px] mt-1" style={{ color: WARNING }}>{t.noReceiptPending}</div>}
-          </div>
-        )}
         {msg && <div className="text-sm font-medium mb-3" style={{ color: msg.startsWith("✅") ? SUCCESS : DANGER }}>{msg}</div>}
         <button onClick={submit} className="jh-btn jh-font-body w-full rounded-lg py-2.5 text-sm font-bold text-white flex items-center justify-center gap-1.5" style={{ background: NAVY_SOFT }}>
           <Plus size={15} /> {t.addProduct}
@@ -863,180 +773,13 @@ function PendingApprovalsPanel({ pin }) {
   );
 }
 
-/* ============================== ADMIN SIDEBAR ================================ */
-function useMenuItems(t, isSuperAdmin) {
-  return useMemo(() => ([
-    { key: "dashboard", label: t.tabDashboard, icon: LayoutGrid },
-    { key: "locations", label: `${t.store} / ${t.godown}`, icon: Building2 },
-    { key: "transfers", label: t.transfer, icon: ArrowLeftRight },
-    { key: "returns", label: t.ret, icon: RotateCcw },
-    { key: "wastage", label: t.wastage, icon: AlertTriangle },
-    { key: "cake", label: t.cakeReport, icon: Cake },
-    { key: "reports", label: t.stockReport, icon: FileBarChart2 },
-    ...(isSuperAdmin ? [{ key: "companies", label: t.allCompanies, icon: Users }] : []),
-    { key: "payment", label: t.tabPayment, icon: Banknote },
-    { key: "notices", label: t.tabNotices, icon: Bell },
-    { key: "users", label: "Users", icon: Users },
-    { key: "settings", label: "Settings", icon: Settings },
-    { key: "support", label: t.contactUs, icon: MessageCircle },
-  ]), [t, isSuperAdmin]);
-}
-
-function Sidebar({ open, onClose, items, activeTab, onSelect }) {
-  return (
-    <>
-      {open && (
-        <div className="fixed inset-0 z-30" style={{ background: "rgba(0,0,0,0.45)" }} onClick={onClose} />
-      )}
-      <div className="fixed top-0 left-0 h-full z-40 transition-transform duration-200"
-        style={{ width: 260, background: CARD, transform: open ? "translateX(0)" : "translateX(-100%)", boxShadow: open ? "4px 0 20px rgba(0,0,0,0.15)" : "none" }}>
-        <div className="flex items-center justify-between px-4 py-4" style={{ background: NAVY }}>
-          <div className="flex items-center gap-2"><LogoBadge size={30} /><span className="jh-font-display text-white text-sm font-bold">Menu</span></div>
-          <button onClick={onClose} className="jh-btn text-white"><X size={20} /></button>
-        </div>
-        <div className="overflow-y-auto" style={{ maxHeight: "calc(100vh - 64px)" }}>
-          {items.map((item) => {
-            const Icon = item.icon;
-            const active = activeTab === item.key;
-            return (
-              <button key={item.key} onClick={() => { onSelect(item.key); onClose(); }}
-                className="jh-btn w-full flex items-center gap-3 px-4 py-3 text-sm font-semibold text-left border-b"
-                style={{ background: active ? GOLD_SOFT : "transparent", color: active ? NAVY : "#333", borderColor: "#F0F1F3" }}>
-                <Icon size={17} style={{ color: active ? GOLD : MUTED }} /> {item.label}
-              </button>
-            );
-          })}
-        </div>
-      </div>
-    </>
-  );
-}
-
-function ComingSoonCard({ label }) {
-  const { t } = useLang();
-  return (
-    <div className="rounded-2xl p-8 flex flex-col items-center text-center gap-2" style={{ background: CARD }}>
-      <AlertCircle size={28} style={{ color: MUTED }} />
-      <div className="jh-font-display text-sm font-bold" style={{ color: NAVY }}>{label}</div>
-      <div className="text-xs" style={{ color: MUTED }}>{t.comingSoon}</div>
-    </div>
-  );
-}
-
-function SupportTab() {
-  const { t } = useLang();
-  const waNumber = "8801856191004";
-  return (
-    <div className="rounded-2xl p-5" style={{ background: CARD }}>
-      <h2 className="jh-font-display text-sm font-bold mb-3" style={{ color: NAVY }}>{t.contactUs}</h2>
-      <a href={`https://wa.me/${waNumber}`} target="_blank" rel="noreferrer"
-        className="jh-btn w-full rounded-lg py-3 text-sm font-bold text-white flex items-center justify-center gap-2" style={{ background: "#1E7B4D" }}>
-        <MessageCircle size={16} /> WhatsApp
-      </a>
-    </div>
-  );
-}
-
-function LocationsTab({ session, companyId }) {
-  const { t } = useLang();
-  const [locations, setLocations] = useState([]);
-  const [loading, setLoading] = useState(true);
-  useEffect(() => {
-    if (!companyId) { setLoading(false); return; }
-    supaRest(`locations?company_id=eq.${companyId}&select=*`, { accessToken: session.accessToken })
-      .then(setLocations).catch(console.error).finally(() => setLoading(false));
-  }, [companyId]);
-  if (!companyId) return <div className="text-sm p-6 text-center" style={{ color: MUTED }}>{t.company}</div>;
-  if (loading) return <div className="text-sm p-6 text-center" style={{ color: MUTED }}>{t.loading}</div>;
-  return (
-    <div className="rounded-2xl p-5" style={{ background: CARD }}>
-      <h2 className="jh-font-display text-sm font-bold mb-3" style={{ color: NAVY }}>{t.store} / {t.godown}</h2>
-      {locations.length === 0 ? <div className="text-sm" style={{ color: MUTED }}>{t.noEntries}</div> : (
-        <div className="flex flex-col gap-2">
-          {locations.map((l) => (
-            <div key={l.id} className="rounded-lg px-3 py-2.5 flex items-center justify-between" style={{ background: BG }}>
-              <div className="jh-font-display text-sm font-bold" style={{ color: NAVY }}>{l.name}</div>
-              <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full" style={{ background: l.type === "store" ? "#E4F2EA" : GOLD_SOFT, color: l.type === "store" ? SUCCESS : "#8A6A17" }}>
-                {l.type === "store" ? t.store : t.godown}
-              </span>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function MovementTypeTab({ session, companyId, movementType, label }) {
-  const { t } = useLang();
-  const [rows, setRows] = useState([]);
-  const [loading, setLoading] = useState(true);
-  useEffect(() => {
-    if (!companyId) { setLoading(false); return; }
-    supaRest(`stock_movements?company_id=eq.${companyId}&movement_type=eq.${movementType}&select=*,products(name)&order=created_at.desc&limit=100`, { accessToken: session.accessToken })
-      .then(setRows).catch(console.error).finally(() => setLoading(false));
-  }, [companyId, movementType]);
-  if (!companyId) return <div className="text-sm p-6 text-center" style={{ color: MUTED }}>{t.company}</div>;
-  if (loading) return <div className="text-sm p-6 text-center" style={{ color: MUTED }}>{t.loading}</div>;
-  return (
-    <div className="rounded-2xl p-5" style={{ background: CARD }}>
-      <h2 className="jh-font-display text-sm font-bold mb-3" style={{ color: NAVY }}>{label}</h2>
-      {rows.length === 0 ? <div className="text-sm" style={{ color: MUTED }}>{t.noEntries}</div> : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs">
-            <thead><tr style={{ color: MUTED }}>
-              <th className="text-left pb-2 font-semibold">{t.productName}</th>
-              <th className="text-right pb-2 font-semibold">{t.qty}</th>
-              <th className="text-right pb-2 font-semibold">{t.costTotal}</th>
-              <th className="text-left pb-2 font-semibold">{t.date}</th>
-            </tr></thead>
-            <tbody>
-              {rows.map((m) => (
-                <tr key={m.id} className="border-t" style={{ borderColor: "#EEF0F3" }}>
-                  <td className="py-2" style={{ color: NAVY }}>{m.products?.name}</td>
-                  <td className="py-2 text-right" style={{ color: NAVY }}>{fmt(m.quantity)}</td>
-                  <td className="py-2 text-right" style={{ color: NAVY }}>{fmt(m.total_cost)}</td>
-                  <td className="py-2" style={{ color: MUTED }}>{m.created_at?.slice(0, 10)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function CompaniesListTab({ companies, activeCompanyId, onSelect }) {
-  const { t } = useLang();
-  return (
-    <div className="rounded-2xl p-5" style={{ background: CARD }}>
-      <h2 className="jh-font-display text-sm font-bold mb-3" style={{ color: NAVY }}>{t.allCompanies}</h2>
-      {companies.length === 0 ? <div className="text-sm" style={{ color: MUTED }}>{t.noEntries}</div> : (
-        <div className="flex flex-col gap-2">
-          {companies.map((c) => (
-            <button key={c.id} onClick={() => onSelect(c.id)} className="jh-btn w-full text-left rounded-lg px-3 py-2.5 flex items-center justify-between"
-              style={{ background: activeCompanyId === c.id ? GOLD_SOFT : BG }}>
-              <span className="jh-font-display text-sm font-bold" style={{ color: NAVY }}>{c.name}</span>
-              <ChevronRight size={15} style={{ color: MUTED }} />
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
 /* ============================== ADMIN SCREEN ================================ */
 function AdminScreen({ session, onLogout }) {
   const { t, lang } = useLang();
   const [tab, setTab] = useState("dashboard");
-  const [menuOpen, setMenuOpen] = useState(false);
   const isSuperAdmin = session.profile?.role === "super_admin";
   const [companies, setCompanies] = useState([]);
   const [activeCompanyId, setActiveCompanyId] = useState(session.profile?.company_id || null);
-  const menuItems = useMenuItems(t, isSuperAdmin);
-  const activeLabel = menuItems.find((m) => m.key === tab)?.label || t.tabDashboard;
 
   useEffect(() => {
     if (isSuperAdmin) {
@@ -1044,18 +787,14 @@ function AdminScreen({ session, onLogout }) {
     }
   }, [isSuperAdmin]);
 
-  const companyId = isSuperAdmin ? activeCompanyId : session.profile?.company_id;
-
   return (
     <div className="min-h-screen jh-font-body" dir={lang === "ar" ? "rtl" : "ltr"} style={{ background: BG }}>
       <GlobalStyle />
-      <Sidebar open={menuOpen} onClose={() => setMenuOpen(false)} items={menuItems} activeTab={tab} onSelect={setTab} />
       <div className="sticky top-0 z-10 px-5 py-4 flex items-center justify-between" style={{ background: NAVY }}>
         <div className="flex items-center gap-2.5">
-          <button onClick={() => setMenuOpen(true)} className="jh-btn text-white mr-1"><Menu size={22} /></button>
           <LogoBadge size={36} />
           <div>
-            <div className="jh-font-display text-white text-base font-bold leading-tight">{activeLabel}</div>
+            <div className="jh-font-display text-white text-base font-bold leading-tight">{t.tabDashboard}</div>
             <div className="text-xs" style={{ color: "#9AA5BD" }}>{isSuperAdmin ? t.allCompanies : t.company}</div>
           </div>
         </div>
@@ -1067,7 +806,7 @@ function AdminScreen({ session, onLogout }) {
         </div>
       </div>
 
-      {isSuperAdmin && tab !== "companies" && (
+      {isSuperAdmin && (
         <div className="px-4 pt-4 max-w-4xl mx-auto">
           <select className="jh-input jh-font-body w-full rounded-lg border px-3 py-2 text-sm" style={{ borderColor: "#D9DCE3", background: CARD }}
             value={activeCompanyId || ""} onChange={(e) => setActiveCompanyId(e.target.value)}>
@@ -1077,20 +816,19 @@ function AdminScreen({ session, onLogout }) {
         </div>
       )}
 
+      <div className="flex gap-2 px-4 pt-4 max-w-4xl mx-auto flex-wrap">
+        <button onClick={() => setTab("dashboard")} className="jh-btn text-xs px-3.5 py-2 rounded-full font-semibold flex items-center gap-1.5"
+          style={{ background: tab === "dashboard" ? NAVY_SOFT : CARD, color: tab === "dashboard" ? "white" : NAVY }}><LayoutGrid size={13} /> {t.tabDashboard}</button>
+        <button onClick={() => setTab("payment")} className="jh-btn text-xs px-3.5 py-2 rounded-full font-semibold flex items-center gap-1.5"
+          style={{ background: tab === "payment" ? NAVY_SOFT : CARD, color: tab === "payment" ? "white" : NAVY }}><Banknote size={13} /> {t.tabPayment}</button>
+        <button onClick={() => setTab("notices")} className="jh-btn text-xs px-3.5 py-2 rounded-full font-semibold flex items-center gap-1.5"
+          style={{ background: tab === "notices" ? NAVY_SOFT : CARD, color: tab === "notices" ? "white" : NAVY }}><Bell size={13} /> {t.tabNotices}</button>
+      </div>
+
       <div className="max-w-4xl mx-auto p-4 pb-20">
-        {tab === "dashboard" && <AdminDashboardTab session={session} companyId={companyId} isSuperAdmin={isSuperAdmin} />}
-        {tab === "locations" && <LocationsTab session={session} companyId={companyId} />}
-        {tab === "transfers" && <MovementTypeTab session={session} companyId={companyId} movementType="transfer" label={t.transfer} />}
-        {tab === "returns" && <MovementTypeTab session={session} companyId={companyId} movementType="return" label={t.ret} />}
-        {tab === "wastage" && <MovementTypeTab session={session} companyId={companyId} movementType="wastage" label={t.wastage} />}
-        {tab === "cake" && <ComingSoonCard label={t.cakeReport} />}
-        {tab === "reports" && <AdminDashboardTab session={session} companyId={companyId} isSuperAdmin={isSuperAdmin} />}
-        {tab === "companies" && isSuperAdmin && <CompaniesListTab companies={companies} activeCompanyId={activeCompanyId} onSelect={(id) => { setActiveCompanyId(id); setTab("dashboard"); }} />}
+        {tab === "dashboard" && <AdminDashboardTab session={session} companyId={isSuperAdmin ? activeCompanyId : session.profile?.company_id} isSuperAdmin={isSuperAdmin} />}
         {tab === "payment" && <SubscriptionTab session={session} companyId={session.profile?.company_id} />}
         {tab === "notices" && <NoticesTab session={session} isSuperAdmin={isSuperAdmin} />}
-        {tab === "users" && <ComingSoonCard label="Users" />}
-        {tab === "settings" && <ComingSoonCard label="Settings" />}
-        {tab === "support" && <SupportTab />}
       </div>
     </div>
   );
