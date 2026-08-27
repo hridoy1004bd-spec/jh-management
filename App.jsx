@@ -474,7 +474,7 @@ function SalesEntryPanel({ pin }) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState("");
-  const setF = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+  const setF = (k) => (v) => setForm((f) => ({ ...f, [k]: v }));
 
   const load = async () => {
     setLoading(true);
@@ -508,18 +508,18 @@ function SalesEntryPanel({ pin }) {
     <div>
       <div className="rounded-2xl p-5" style={{ background: CARD }}>
         <div className="grid grid-cols-2 gap-3 mb-3">
-          <Field icon={User} label={t.name}><TextInput value={form.name} onChange={(e) => setF("name", e.target.value)} /></Field>
-          <Field icon={Calendar} label={t.date}><TextInput type="date" value={form.date} onChange={(e) => setF("date", e.target.value)} /></Field>
+          <Field icon={User} label={t.name}><TextInput value={form.name} onChange={(e) => setF("name")(e.target.value)} /></Field>
+          <Field icon={Calendar} label={t.date}><TextInput type="date" value={form.date} onChange={(e) => setF("date")(e.target.value)} /></Field>
         </div>
         <div className="grid grid-cols-2 gap-3 mb-3">
-          <Field icon={Wallet} label={t.open}><NumInput value={form.open} onChange={(v) => setF("open", v)} /></Field>
-          <Field icon={Wallet} label={t.cash}><NumInput value={form.cash} onChange={(v) => setF("cash", v)} /></Field>
-          <Field icon={CreditCard} label={t.mada}><NumInput value={form.mada} onChange={(v) => setF("mada", v)} /></Field>
-          <Field icon={CreditCard} label={t.visa}><NumInput value={form.visa} onChange={(v) => setF("visa", v)} /></Field>
-          <Field icon={Landmark} label={t.master}><NumInput value={form.master} onChange={(v) => setF("master", v)} /></Field>
-          <Field icon={Truck} label={t.hangar}><NumInput value={form.hangar} onChange={(v) => setF("hangar", v)} /></Field>
-          <Field icon={Bike} label={t.jahez}><NumInput value={form.jahez} onChange={(v) => setF("jahez", v)} /></Field>
-          <Field icon={Landmark} label={t.systemSales}><NumInput value={form.systemSales} onChange={(v) => setF("systemSales", v)} /></Field>
+          <Field icon={Wallet} label={t.open}><NumInput value={form.open} onChange={setF("open")} /></Field>
+          <Field icon={Wallet} label={t.cash}><NumInput value={form.cash} onChange={setF("cash")} /></Field>
+          <Field icon={CreditCard} label={t.mada}><NumInput value={form.mada} onChange={setF("mada")} /></Field>
+          <Field icon={CreditCard} label={t.visa}><NumInput value={form.visa} onChange={setF("visa")} /></Field>
+          <Field icon={Landmark} label={t.master}><NumInput value={form.master} onChange={setF("master")} /></Field>
+          <Field icon={Truck} label={t.hangar}><NumInput value={form.hangar} onChange={setF("hangar")} /></Field>
+          <Field icon={Bike} label={t.jahez}><NumInput value={form.jahez} onChange={setF("jahez")} /></Field>
+          <Field icon={Landmark} label={t.systemSales}><NumInput value={form.systemSales} onChange={setF("systemSales")} /></Field>
         </div>
         <div className="grid grid-cols-2 gap-3 mb-3 rounded-xl p-3" style={{ background: BG }}>
           <div>
@@ -533,10 +533,10 @@ function SalesEntryPanel({ pin }) {
             </div>
           </div>
         </div>
-        <div className="mb-3"><Field icon={Receipt} label={t.expense}><NumInput value={form.expense} onChange={(v) => setF("expense", v)} /></Field></div>
+        <div className="mb-3"><Field icon={Receipt} label={t.expense}><NumInput value={form.expense} onChange={setF("expense")} /></Field></div>
         <Field icon={StickyNote} label={t.note}>
           <textarea className="jh-input jh-font-body w-full rounded-lg border px-3 py-2 text-sm" style={{ borderColor: "#D9DCE3" }} rows={2}
-            value={form.note} onChange={(e) => setF("note", e.target.value)} />
+            value={form.note} onChange={(e) => setF("note")(e.target.value)} />
         </Field>
         {msg && <div className="mt-3 text-sm font-medium" style={{ color: msg.startsWith("✅") ? SUCCESS : DANGER }}>{msg}</div>}
         <button onClick={submit} disabled={saving} className="jh-btn jh-font-body w-full mt-4 rounded-lg py-3 text-sm font-bold text-white flex items-center justify-center gap-2"
