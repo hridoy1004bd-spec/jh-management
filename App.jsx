@@ -207,6 +207,8 @@ const STR = {
     pendingPayments: "অপেক্ষারত পেমেন্ট", approve: "✅ অনুমোদন করুন", rejectPayment: "❌ বাতিল করুন",
     noPendingPayments: "কোনো অপেক্ষারত পেমেন্ট নেই", amount: "টাকার পরিমাণ",
     expired: "মেয়াদ শেষ", expiringSoon: "মেয়াদ শীঘ্রই শেষ হবে", safe: "নিরাপদ",
+    notEnoughStock: "পর্যাপ্ত স্টক নেই", outOfStock: "স্টক নেই", searchProduct: "পণ্যের নাম লিখে খুঁজুন",
+    available: "মজুদ আছে", retToSupplier: "সাপ্লায়ারকে ফেরত (Return)",
   },
   en: {
     appName: "J H Management", tagline: "Multi-business Management Platform",
@@ -246,6 +248,8 @@ const STR = {
     pendingPayments: "Pending Payments", approve: "✅ Approve", rejectPayment: "❌ Reject",
     noPendingPayments: "No pending payments", amount: "Amount",
     expired: "Expired", expiringSoon: "Expiring Soon", safe: "Safe",
+    notEnoughStock: "Not enough stock", outOfStock: "Out of stock", searchProduct: "Type to search product",
+    available: "Available", retToSupplier: "Return to Supplier",
   },
   ar: {
     appName: "جي إتش للإدارة", tagline: "منصة إدارة الأعمال متعددة الشركات",
@@ -284,6 +288,8 @@ const STR = {
     pendingPayments: "المدفوعات المعلقة", approve: "✅ موافقة", rejectPayment: "❌ رفض",
     noPendingPayments: "لا توجد مدفوعات معلقة", amount: "المبلغ",
     expired: "منتهي الصلاحية", expiringSoon: "قريب الانتهاء", safe: "آمن",
+    notEnoughStock: "لا يوجد مخزون كافٍ", outOfStock: "نفذ المخزون", searchProduct: "اكتب للبحث عن المنتج",
+    available: "المتوفر", retToSupplier: "إرجاع إلى المورّد",
   },
 };
 const LangContext = createContext(null);
@@ -623,11 +629,12 @@ function InventoryPanel({ pin, locationId, companyId, isStore }) {
   const { t } = useLang();
   const [stock, setStock] = useState([]);
   const [products, setProducts] = useState([]);
+  const [locations, setLocations] = useState([]);
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState("");
   const [newProductName, setNewProductName] = useState("");
   const [newProductUnit, setNewProductUnit] = useState("pcs");
-  const blank = { productId: "", quantity: "", totalCost: "", movementType: isStore ? "sale" : "purchase", toLocationPin: "", expiryDate: "", supplier: "", purchaseDate: todayISO() };
+  const blank = { productId: "", quantity: "", totalCost: "", movementType: isStore ? "sale" : "purchase", toLocationId: "", expiryDate: "", supplier: "", purchaseDate: todayISO() };
   const [form, setForm] = useState(blank);
   const [productPhotoFile, setProductPhotoFile] = useState(null);
   const [cashMemoFile, setCashMemoFile] = useState(null);
@@ -636,11 +643,12 @@ function InventoryPanel({ pin, locationId, companyId, isStore }) {
   const load = async () => {
     setLoading(true);
     try {
-      const [s, p] = await Promise.all([
+      const [s, p, l] = await Promise.all([
         supaRpc("get_location_stock", { p_pin: pin }),
         supaRpc("get_products_for_pin", { p_pin: pin }),
+        supaRpc("get_locations_for_pin", { p_pin: pin }),
       ]);
-      setStock(s); setProducts(p);
+      setStock(s); setProducts(p); setLocations(l);
     } catch (e) { console.error(e); }
     setLoading(false);
   };
@@ -658,24 +666,22 @@ function InventoryPanel({ pin, locationId, companyId, isStore }) {
   };
 
   const isPurchase = form.movementType === "purchase";
+  const isReturnToSupplier = !isStore && form.movementType === "ret";
+  const needsTarget = form.movementType === "transfer" || (isStore && form.movementType === "ret");
+  const availableQty = stock.find((s) => s.product_id === form.productId)?.quantity ?? 0;
+  const needsStockCheck = ["sale", "wastage", "transfer", "ret"].includes(form.movementType);
 
   const submit = async () => {
     setMsg("");
     if (!form.productId) { setMsg(t.productName); return; }
     if (num(form.quantity) <= 0) { setMsg(t.quantity); return; }
+    if (needsTarget && !form.toLocationId) { setMsg(t.toLocation); return; }
+    if (needsStockCheck && num(form.quantity) > Math.max(availableQty, 0)) { setMsg(t.notEnoughStock); return; }
     setUploading(true);
     try {
-      const needsTarget = form.movementType === "transfer" || form.movementType === "ret";
-      let toLoc = null;
-      if (needsTarget) {
-        const rows = await supaRpc("verify_location_pin", { p_pin: form.toLocationPin });
-        if (!rows || rows.length === 0) { setMsg(t.wrongPin); setUploading(false); return; }
-        toLoc = rows[0].location_id;
-      }
-
       let productPhotoUrl = null;
       let cashMemoUrl = null;
-      if (isPurchase) {
+      if (isPurchase || isReturnToSupplier) {
         if (productPhotoFile) productPhotoUrl = await uploadPhoto("product-photos", companyId, pin, productPhotoFile);
         if (cashMemoFile) cashMemoUrl = await uploadPhoto("invoice-photos", companyId, pin, cashMemoFile);
       }
@@ -683,15 +689,15 @@ function InventoryPanel({ pin, locationId, companyId, isStore }) {
       await supaRpc("submit_stock_movement", {
         p_pin: pin,
         p_from_location: locationId,
-        p_to_location: toLoc,
+        p_to_location: needsTarget ? form.toLocationId : null,
         p_product_id: form.productId,
         p_quantity: num(form.quantity),
         p_total_cost: num(form.totalCost),
         p_expiry_date: form.expiryDate || null,
         p_movement_type: form.movementType === "ret" ? "return" : form.movementType,
         p_receipt_url: cashMemoUrl,
-        p_supplier: isPurchase ? (form.supplier || null) : null,
-        p_purchase_date: isPurchase ? (form.purchaseDate || null) : null,
+        p_supplier: (isPurchase || isReturnToSupplier) ? (form.supplier || null) : null,
+        p_purchase_date: (isPurchase || isReturnToSupplier) ? (form.purchaseDate || null) : null,
         p_product_photo_url: productPhotoUrl,
       });
       setMsg(t.savedOk);
@@ -717,7 +723,9 @@ function InventoryPanel({ pin, locationId, companyId, isStore }) {
               {stock.map((s) => (
                 <div key={s.product_id} className="rounded-lg px-3 py-2 flex items-center justify-between" style={{ background: BG }}>
                   <div className="jh-font-display text-sm font-bold" style={{ color: NAVY }}>{s.product_name}</div>
-                  <div className="text-xs font-semibold" style={{ color: MUTED }}>{fmt(s.quantity)} {s.unit}</div>
+                  <div className="text-xs font-semibold" style={{ color: s.quantity <= 0 ? DANGER : MUTED }}>
+                    {s.quantity <= 0 ? t.outOfStock : `${fmt(s.quantity)} ${s.unit}`}
+                  </div>
                 </div>
               ))}
             </div>
@@ -743,11 +751,16 @@ function InventoryPanel({ pin, locationId, companyId, isStore }) {
         <h2 className="jh-font-display text-sm font-bold mb-3" style={{ color: NAVY }}>{t.addProduct}</h2>
         <div className="mb-3">
           <Field label={t.productName}>
-            <select className="jh-input jh-font-body w-full rounded-lg border px-3 py-2 text-sm" style={{ borderColor: "#D9DCE3" }}
-              value={form.productId} onChange={(e) => setForm((f) => ({ ...f, productId: e.target.value }))}>
-              <option value="">—</option>
-              {products.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-            </select>
+            <input list="product-list-inv" className="jh-input jh-font-body w-full rounded-lg border px-3 py-2 text-sm" style={{ borderColor: "#D9DCE3" }}
+              placeholder={t.searchProduct}
+              value={products.find((p) => p.id === form.productId)?.name || ""}
+              onChange={(e) => {
+                const match = products.find((p) => p.name === e.target.value);
+                setForm((f) => ({ ...f, productId: match ? match.id : "" }));
+              }} />
+            <datalist id="product-list-inv">
+              {products.map((p) => <option key={p.id} value={p.name} />)}
+            </datalist>
           </Field>
         </div>
         <div className="grid grid-cols-2 gap-3 mb-3">
@@ -765,14 +778,22 @@ function InventoryPanel({ pin, locationId, companyId, isStore }) {
                 <>
                   <option value="purchase">{t.purchase}</option>
                   <option value="transfer">{t.transfer}</option>
+                  <option value="ret">{t.retToSupplier}</option>
                   <option value="wastage">{t.wastage}</option>
                 </>
               )}
             </select>
           </Field>
-          <Field label={t.quantity}><NumInput value={form.quantity} onChange={(v) => setForm((f) => ({ ...f, quantity: v }))} /></Field>
+          <Field label={t.quantity}>
+            <NumInput value={form.quantity} onChange={(v) => setForm((f) => ({ ...f, quantity: v }))} />
+            {needsStockCheck && form.productId && (
+              <div className="text-xs mt-1" style={{ color: availableQty <= 0 ? DANGER : MUTED }}>
+                {t.available}: {Math.max(availableQty, 0)}
+              </div>
+            )}
+          </Field>
         </div>
-        {!isStore && isPurchase && (
+        {!isStore && (isPurchase || isReturnToSupplier) && (
           <>
             <div className="grid grid-cols-2 gap-3 mb-3">
               <Field label={t.costTotal}><NumInput value={form.totalCost} onChange={(v) => setForm((f) => ({ ...f, totalCost: v }))} /></Field>
@@ -796,8 +817,16 @@ function InventoryPanel({ pin, locationId, companyId, isStore }) {
             )}
           </>
         )}
-        {(form.movementType === "transfer" || form.movementType === "ret") && (
-          <div className="mb-3"><Field icon={KeyRound} label={t.toLocation}><TextInput value={form.toLocationPin} onChange={(e) => setForm((f) => ({ ...f, toLocationPin: e.target.value }))} placeholder="PIN" /></Field></div>
+        {needsTarget && (
+          <div className="mb-3">
+            <Field icon={KeyRound} label={t.toLocation}>
+              <select className="jh-input jh-font-body w-full rounded-lg border px-3 py-2 text-sm" style={{ borderColor: "#D9DCE3" }}
+                value={form.toLocationId} onChange={(e) => setForm((f) => ({ ...f, toLocationId: e.target.value }))}>
+                <option value="">—</option>
+                {locations.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+              </select>
+            </Field>
+          </div>
         )}
         <div className="mb-3"><Field icon={CalendarClock} label={t.expiryDate}><TextInput type="date" value={form.expiryDate} onChange={(e) => setForm((f) => ({ ...f, expiryDate: e.target.value }))} /></Field></div>
         {msg && <div className="text-sm font-medium mb-3" style={{ color: msg.startsWith("✅") ? SUCCESS : DANGER }}>{msg}</div>}
