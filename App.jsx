@@ -487,6 +487,10 @@ function LocationScreen({ session, onLogout }) {
           style={{ background: tab === "inventory" ? NAVY_SOFT : CARD, color: tab === "inventory" ? "white" : NAVY }}>
           <Package size={13} /> {t.tabInventory}
         </button>
+        <button onClick={() => setTab("cake")} className="jh-btn text-xs px-3.5 py-2 rounded-full font-semibold flex items-center gap-1.5"
+          style={{ background: tab === "cake" ? NAVY_SOFT : CARD, color: tab === "cake" ? "white" : NAVY }}>
+          <Cake size={13} /> {t.cakeReport}
+        </button>
         <button onClick={() => setTab("pending")} className="jh-btn text-xs px-3.5 py-2 rounded-full font-semibold flex items-center gap-1.5"
           style={{ background: tab === "pending" ? NAVY_SOFT : CARD, color: tab === "pending" ? "white" : NAVY }}>
           <Bell size={13} /> {t.tabPending}
@@ -496,6 +500,7 @@ function LocationScreen({ session, onLogout }) {
       <div className="max-w-2xl mx-auto p-4 pb-20">
         {tab === "entry" && isStore && <SalesEntryPanel pin={session.pin} />}
         {tab === "inventory" && <InventoryPanel pin={session.pin} locationId={session.location_id} companyId={session.company_id} isStore={isStore} />}
+        {tab === "cake" && <CakePanel pin={session.pin} locationId={session.location_id} companyId={session.company_id} isStore={isStore} />}
         {tab === "pending" && <PendingApprovalsPanel pin={session.pin} />}
       </div>
     </div>
@@ -795,6 +800,163 @@ function InventoryPanel({ pin, locationId, companyId, isStore }) {
           <div className="mb-3"><Field icon={KeyRound} label={t.toLocation}><TextInput value={form.toLocationPin} onChange={(e) => setForm((f) => ({ ...f, toLocationPin: e.target.value }))} placeholder="PIN" /></Field></div>
         )}
         <div className="mb-3"><Field icon={CalendarClock} label={t.expiryDate}><TextInput type="date" value={form.expiryDate} onChange={(e) => setForm((f) => ({ ...f, expiryDate: e.target.value }))} /></Field></div>
+        {msg && <div className="text-sm font-medium mb-3" style={{ color: msg.startsWith("✅") ? SUCCESS : DANGER }}>{msg}</div>}
+        <button onClick={submit} disabled={uploading} className="jh-btn jh-font-body w-full rounded-lg py-2.5 text-sm font-bold text-white flex items-center justify-center gap-1.5" style={{ background: NAVY_SOFT, opacity: uploading ? 0.7 : 1 }}>
+          <Plus size={15} /> {uploading ? t.saving : t.addProduct}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* ---------------------------- Cake Panel ------------------------------------ */
+function CakePanel({ pin, locationId, companyId, isStore }) {
+  const { t } = useLang();
+  const [stock, setStock] = useState([]);
+  const [cakeProducts, setCakeProducts] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [msg, setMsg] = useState("");
+  const [newCakeName, setNewCakeName] = useState("");
+  const blank = { cakeProductId: "", quantity: "", entryType: isStore ? "sale" : "production", toLocationPin: "", expiryDate: "", note: "" };
+  const [form, setForm] = useState(blank);
+  const [photoFile, setPhotoFile] = useState(null);
+  const [uploading, setUploading] = useState(false);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const [s, p] = await Promise.all([
+        supaRpc("get_location_cake_stock", { p_pin: pin }),
+        supaRpc("get_cake_products_for_pin", { p_pin: pin }),
+      ]);
+      setStock(s); setCakeProducts(p);
+    } catch (e) { console.error(e); }
+    setLoading(false);
+  };
+  useEffect(() => { load(); }, []);
+
+  const addNewCake = async () => {
+    if (!newCakeName.trim()) return;
+    setMsg("");
+    try {
+      const id = await supaRpc("ensure_cake_product", { p_pin: pin, p_name: newCakeName.trim() });
+      setNewCakeName("");
+      await load();
+      setForm((f) => ({ ...f, cakeProductId: id }));
+    } catch (e) { setMsg(`${t.savedFail} ${e.message}`); }
+  };
+
+  const needsTarget = form.entryType === "transfer" || form.entryType === "ret";
+
+  const submit = async () => {
+    setMsg("");
+    if (!form.cakeProductId) { setMsg(t.productName); return; }
+    if (num(form.quantity) <= 0) { setMsg(t.quantity); return; }
+    setUploading(true);
+    try {
+      let toLoc = null;
+      if (needsTarget) {
+        const rows = await supaRpc("verify_location_pin", { p_pin: form.toLocationPin });
+        if (!rows || rows.length === 0) { setMsg(t.wrongPin); setUploading(false); return; }
+        toLoc = rows[0].location_id;
+      }
+      let photoUrl = null;
+      if (photoFile) photoUrl = await uploadPhoto("product-photos", companyId, pin, photoFile);
+
+      await supaRpc("submit_cake_entry", {
+        p_pin: pin,
+        p_from_location: locationId,
+        p_to_location: toLoc,
+        p_cake_product_id: form.cakeProductId,
+        p_quantity: num(form.quantity),
+        p_expiry_date: form.expiryDate || null,
+        p_entry_type: form.entryType === "ret" ? "return" : form.entryType,
+        p_photo_url: photoUrl,
+        p_note: form.note || null,
+      });
+      setMsg(t.savedOk);
+      setForm(blank);
+      setPhotoFile(null);
+      load();
+    } catch (e) { setMsg(`${t.savedFail} ${e.message}`); }
+    setUploading(false);
+    setTimeout(() => setMsg(""), 6000);
+  };
+
+  return (
+    <div>
+      <div className="rounded-2xl p-5 mb-4" style={{ background: CARD }}>
+        <h2 className="jh-font-display text-sm font-bold flex items-center gap-1.5 mb-3" style={{ color: NAVY }}>
+          <Cake size={16} /> {t.currentStock}
+        </h2>
+        {loading ? <div className="text-sm" style={{ color: MUTED }}>{t.loading}</div>
+          : stock.length === 0 ? <div className="text-sm" style={{ color: MUTED }}>{t.noStock}</div>
+          : (
+            <div className="flex flex-col gap-2">
+              {stock.map((s) => (
+                <div key={s.cake_product_id} className="rounded-lg px-3 py-2 flex items-center justify-between" style={{ background: BG }}>
+                  <div className="jh-font-display text-sm font-bold" style={{ color: NAVY }}>{s.cake_product_name}</div>
+                  <div className="text-xs font-semibold" style={{ color: MUTED }}>{fmt(s.quantity)}</div>
+                </div>
+              ))}
+            </div>
+          )}
+      </div>
+
+      <div className="rounded-2xl p-5 mb-4" style={{ background: CARD }}>
+        <h2 className="jh-font-display text-sm font-bold mb-3" style={{ color: NAVY }}>+ {t.productName}</h2>
+        <div className="flex gap-3">
+          <TextInput value={newCakeName} onChange={(e) => setNewCakeName(e.target.value)} placeholder={t.productName} />
+        </div>
+        <button onClick={addNewCake} className="jh-btn jh-font-body w-full mt-3 rounded-lg py-2 text-xs font-bold" style={{ background: BG, color: NAVY }}>
+          <Plus size={13} className="inline mr-1" /> {t.addProduct}
+        </button>
+      </div>
+
+      <div className="rounded-2xl p-5" style={{ background: CARD }}>
+        <h2 className="jh-font-display text-sm font-bold mb-3" style={{ color: NAVY }}>{t.addProduct}</h2>
+        <div className="mb-3">
+          <Field label={t.productName}>
+            <select className="jh-input jh-font-body w-full rounded-lg border px-3 py-2 text-sm" style={{ borderColor: "#D9DCE3" }}
+              value={form.cakeProductId} onChange={(e) => setForm((f) => ({ ...f, cakeProductId: e.target.value }))}>
+              <option value="">—</option>
+              {cakeProducts.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+          </Field>
+        </div>
+        <div className="grid grid-cols-2 gap-3 mb-3">
+          <Field label={t.movementType}>
+            <select className="jh-input jh-font-body w-full rounded-lg border px-3 py-2 text-sm" style={{ borderColor: "#D9DCE3" }}
+              value={form.entryType} onChange={(e) => setForm((f) => ({ ...f, entryType: e.target.value }))}>
+              {isStore ? (
+                <>
+                  <option value="sale">{t.sale}</option>
+                  <option value="transfer">{t.transfer}</option>
+                  <option value="ret">{t.ret}</option>
+                  <option value="wastage">{t.wastage}</option>
+                </>
+              ) : (
+                <>
+                  <option value="production">{t.purchase}</option>
+                  <option value="transfer">{t.transfer}</option>
+                  <option value="wastage">{t.wastage}</option>
+                </>
+              )}
+            </select>
+          </Field>
+          <Field label={t.quantity}><NumInput value={form.quantity} onChange={(v) => setForm((f) => ({ ...f, quantity: v }))} /></Field>
+        </div>
+        {needsTarget && (
+          <div className="mb-3"><Field icon={KeyRound} label={t.toLocation}><TextInput value={form.toLocationPin} onChange={(e) => setForm((f) => ({ ...f, toLocationPin: e.target.value }))} placeholder="PIN" /></Field></div>
+        )}
+        <div className="mb-3"><Field icon={CalendarClock} label={t.expiryDate}><TextInput type="date" value={form.expiryDate} onChange={(e) => setForm((f) => ({ ...f, expiryDate: e.target.value }))} /></Field></div>
+        <div className="grid grid-cols-2 gap-3 mb-3">
+          <Field icon={Camera} label={t.productPhoto}>
+            <input type="file" accept="image/*" capture="environment" className="jh-input jh-font-body w-full rounded-lg border px-2 py-2 text-xs" style={{ borderColor: "#D9DCE3" }}
+              onChange={(e) => setPhotoFile(e.target.files?.[0] || null)} />
+          </Field>
+          <Field label={t.note}><TextInput value={form.note} onChange={(e) => setForm((f) => ({ ...f, note: e.target.value }))} /></Field>
+        </div>
         {msg && <div className="text-sm font-medium mb-3" style={{ color: msg.startsWith("✅") ? SUCCESS : DANGER }}>{msg}</div>}
         <button onClick={submit} disabled={uploading} className="jh-btn jh-font-body w-full rounded-lg py-2.5 text-sm font-bold text-white flex items-center justify-center gap-1.5" style={{ background: NAVY_SOFT, opacity: uploading ? 0.7 : 1 }}>
           <Plus size={15} /> {uploading ? t.saving : t.addProduct}
