@@ -650,6 +650,7 @@ function InventoryPanel({ pin, locationId, companyId, isStore }) {
   const [msg, setMsg] = useState("");
   const [newProductName, setNewProductName] = useState("");
   const [newProductUnit, setNewProductUnit] = useState("pcs");
+  const [productSearchText, setProductSearchText] = useState("");
   const blank = { productId: "", quantity: "", totalCost: "", movementType: isStore ? "sale" : "purchase", toLocationId: "", expiryDate: "", supplier: "", purchaseDate: todayISO() };
   const [form, setForm] = useState(blank);
   const [productPhotoFile, setProductPhotoFile] = useState(null);
@@ -674,10 +675,12 @@ function InventoryPanel({ pin, locationId, companyId, isStore }) {
     if (!newProductName.trim()) return;
     setMsg("");
     try {
-      const id = await supaRpc("ensure_product", { p_pin: pin, p_name: newProductName.trim(), p_unit: newProductUnit });
+      const trimmedName = newProductName.trim();
+      const id = await supaRpc("ensure_product", { p_pin: pin, p_name: trimmedName, p_unit: newProductUnit });
       setNewProductName("");
       await load();
       setForm((f) => ({ ...f, productId: id }));
+      setProductSearchText(trimmedName);
     } catch (e) { setMsg(`${t.savedFail} ${e.message}`); }
   };
 
@@ -718,6 +721,7 @@ function InventoryPanel({ pin, locationId, companyId, isStore }) {
       });
       setMsg(t.savedOk);
       setForm(blank);
+      setProductSearchText("");
       setProductPhotoFile(null);
       setCashMemoFile(null);
       load();
@@ -769,9 +773,11 @@ function InventoryPanel({ pin, locationId, companyId, isStore }) {
           <Field label={t.productName}>
             <input list="product-list-inv" className="jh-input jh-font-body w-full rounded-lg border px-3 py-2 text-sm" style={{ borderColor: "#D9DCE3" }}
               placeholder={t.searchProduct}
-              value={products.find((p) => p.id === form.productId)?.name || ""}
+              value={productSearchText}
               onChange={(e) => {
-                const match = products.find((p) => p.name === e.target.value);
+                const val = e.target.value;
+                setProductSearchText(val);
+                const match = products.find((p) => p.name === val);
                 setForm((f) => ({ ...f, productId: match ? match.id : "" }));
               }} />
             <datalist id="product-list-inv">
