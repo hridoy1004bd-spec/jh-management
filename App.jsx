@@ -394,8 +394,19 @@ function CompanyAuthScreen({ onLoggedIn, onBack }) {
     setBusy(true); setError("");
     try {
       const session = await authSignIn(email, password);
-      const profiles = await supaRest(`profiles?id=eq.${session.user.id}&select=*`, { accessToken: session.access_token });
-      const profile = profiles && profiles[0];
+      let profiles = await supaRest(`profiles?id=eq.${session.user.id}&select=*`, { accessToken: session.access_token });
+      let profile = profiles && profiles[0];
+      // If email-confirmation delayed bootstrap_company at signup time, finish it now.
+      if ((!profile || !profile.company_id)) {
+        const pendingRaw = localStorage.getItem(`jh_pending_signup_${email.trim().toLowerCase()}`);
+        if (pendingRaw) {
+          const pending = JSON.parse(pendingRaw);
+          await supaRpc("bootstrap_company", { p_company_name: pending.companyName, p_whatsapp: pending.whatsapp, p_store_pin: pending.storePin, p_godown_pin: pending.godownPin }, session.access_token);
+          localStorage.removeItem(`jh_pending_signup_${email.trim().toLowerCase()}`);
+          profiles = await supaRest(`profiles?id=eq.${session.user.id}&select=*`, { accessToken: session.access_token });
+          profile = profiles && profiles[0];
+        }
+      }
       onLoggedIn({ accessToken: session.access_token, user: session.user, profile });
     } catch (e) { setError(e.message); }
     setBusy(false);
@@ -408,6 +419,11 @@ function CompanyAuthScreen({ onLoggedIn, onBack }) {
       const session = await authSignUp(email, password);
       const token = session.access_token;
       if (!token) {
+        // No session yet (email confirmation required) — save the details so
+        // doLogin can finish bootstrap_company right after the user confirms and logs in.
+        localStorage.setItem(`jh_pending_signup_${email.trim().toLowerCase()}`, JSON.stringify({
+          companyName: companyName.trim(), whatsapp, storePin: storePin.trim(), godownPin: godownPin.trim(),
+        }));
         setError("Sign up successful — check email to confirm, then Login.");
         setBusy(false); setMode("login");
         return;
@@ -843,10 +859,11 @@ function CakePanel({ pin, locationId, companyId, isStore }) {
   const { t } = useLang();
   const [stock, setStock] = useState([]);
   const [cakeProducts, setCakeProducts] = useState([]);
+  const [locations, setLocations] = useState([]);
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState("");
   const [newCakeName, setNewCakeName] = useState("");
-  const blank = { cakeProductId: "", quantity: "", entryType: isStore ? "sale" : "production", toLocationPin: "", expiryDate: "", note: "" };
+  const blank = { cakeProductId: "", quantity: "", entryType: isStore ? "sale" : "total", toLocationId: "", expiryDate: "", note: "" };
   const [form, setForm] = useState(blank);
   const [photoFile, setPhotoFile] = useState(null);
   const [uploading, setUploading] = useState(false);
@@ -854,11 +871,12 @@ function CakePanel({ pin, locationId, companyId, isStore }) {
   const load = async () => {
     setLoading(true);
     try {
-      const [s, p] = await Promise.all([
+      const [s, p, l] = await Promise.all([
         supaRpc("get_location_cake_stock", { p_pin: pin }),
         supaRpc("get_cake_products_for_pin", { p_pin: pin }),
+        supaRpc("get_locations_for_pin", { p_pin: pin }),
       ]);
-      setStock(s); setCakeProducts(p);
+      setStock(s); setCakeProducts(p); setLocations(l);
     } catch (e) { console.error(e); }
     setLoading(false);
   };
@@ -875,27 +893,25 @@ function CakePanel({ pin, locationId, companyId, isStore }) {
     } catch (e) { setMsg(`${t.savedFail} ${e.message}`); }
   };
 
-  const needsTarget = form.entryType === "transfer" || form.entryType === "ret";
+  const needsTarget = form.entryType === "transferOut" || form.entryType === "ret";
+  const availableQty = stock.find((s) => s.cake_product_id === form.cakeProductId)?.quantity ?? 0;
+  const needsStockCheck = ["sale", "wastage", "transferOut", "ret"].includes(form.entryType);
 
   const submit = async () => {
     setMsg("");
     if (!form.cakeProductId) { setMsg(t.productName); return; }
     if (num(form.quantity) <= 0) { setMsg(t.quantity); return; }
+    if (needsTarget && !form.toLocationId) { setMsg(t.toLocation); return; }
+    if (needsStockCheck && num(form.quantity) > Math.max(availableQty, 0)) { setMsg(t.notEnoughStock); return; }
     setUploading(true);
     try {
-      let toLoc = null;
-      if (needsTarget) {
-        const rows = await supaRpc("verify_location_pin", { p_pin: form.toLocationPin });
-        if (!rows || rows.length === 0) { setMsg(t.wrongPin); setUploading(false); return; }
-        toLoc = rows[0].location_id;
-      }
       let photoUrl = null;
       if (photoFile) photoUrl = await uploadPhoto("product-photos", companyId, pin, photoFile);
 
       await supaRpc("submit_cake_entry", {
         p_pin: pin,
         p_from_location: locationId,
-        p_to_location: toLoc,
+        p_to_location: needsTarget ? form.toLocationId : null,
         p_cake_product_id: form.cakeProductId,
         p_quantity: num(form.quantity),
         p_expiry_date: form.expiryDate || null,
@@ -925,7 +941,9 @@ function CakePanel({ pin, locationId, companyId, isStore }) {
               {stock.map((s) => (
                 <div key={s.cake_product_id} className="rounded-lg px-3 py-2 flex items-center justify-between" style={{ background: BG }}>
                   <div className="jh-font-display text-sm font-bold" style={{ color: NAVY }}>{s.cake_product_name}</div>
-                  <div className="text-xs font-semibold" style={{ color: MUTED }}>{fmt(s.quantity)}</div>
+                  <div className="text-xs font-semibold" style={{ color: s.quantity <= 0 ? DANGER : MUTED }}>
+                    {s.quantity <= 0 ? t.outOfStock : fmt(s.quantity)}
+                  </div>
                 </div>
               ))}
             </div>
@@ -960,23 +978,38 @@ function CakePanel({ pin, locationId, companyId, isStore }) {
               {isStore ? (
                 <>
                   <option value="sale">{t.sale}</option>
-                  <option value="transfer">{t.transfer}</option>
+                  <option value="transferOut">{t.transfer}</option>
                   <option value="ret">{t.ret}</option>
                   <option value="wastage">{t.wastage}</option>
                 </>
               ) : (
                 <>
-                  <option value="production">{t.purchase}</option>
-                  <option value="transfer">{t.transfer}</option>
+                  <option value="total">{t.purchase}</option>
+                  <option value="transferOut">{t.transfer}</option>
                   <option value="wastage">{t.wastage}</option>
                 </>
               )}
             </select>
           </Field>
-          <Field label={t.quantity}><NumInput value={form.quantity} onChange={(v) => setForm((f) => ({ ...f, quantity: v }))} /></Field>
+          <Field label={t.quantity}>
+            <NumInput value={form.quantity} onChange={(v) => setForm((f) => ({ ...f, quantity: v }))} />
+            {needsStockCheck && form.cakeProductId && (
+              <div className="text-xs mt-1" style={{ color: availableQty <= 0 ? DANGER : MUTED }}>
+                {t.available}: {Math.max(availableQty, 0)}
+              </div>
+            )}
+          </Field>
         </div>
         {needsTarget && (
-          <div className="mb-3"><Field icon={KeyRound} label={t.toLocation}><TextInput value={form.toLocationPin} onChange={(e) => setForm((f) => ({ ...f, toLocationPin: e.target.value }))} placeholder="PIN" /></Field></div>
+          <div className="mb-3">
+            <Field icon={KeyRound} label={t.toLocation}>
+              <select className="jh-input jh-font-body w-full rounded-lg border px-3 py-2 text-sm" style={{ borderColor: "#D9DCE3" }}
+                value={form.toLocationId} onChange={(e) => setForm((f) => ({ ...f, toLocationId: e.target.value }))}>
+                <option value="">—</option>
+                {locations.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+              </select>
+            </Field>
+          </div>
         )}
         <div className="mb-3"><Field icon={CalendarClock} label={t.expiryDate}><TextInput type="date" value={form.expiryDate} onChange={(e) => setForm((f) => ({ ...f, expiryDate: e.target.value }))} /></Field></div>
         <div className="grid grid-cols-2 gap-3 mb-3">
@@ -999,13 +1032,19 @@ function CakePanel({ pin, locationId, companyId, isStore }) {
 function PendingApprovalsPanel({ pin }) {
   const { t } = useLang();
   const [rows, setRows] = useState([]);
+  const [cakeRows, setCakeRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState("");
 
   const load = async () => {
     setLoading(true);
-    try { setRows(await supaRpc("get_pending_movements", { p_pin: pin })); }
-    catch (e) { console.error(e); }
+    try {
+      const [m, c] = await Promise.all([
+        supaRpc("get_pending_movements", { p_pin: pin }),
+        supaRpc("get_pending_cake_entries", { p_pin: pin }),
+      ]);
+      setRows(m); setCakeRows(c);
+    } catch (e) { console.error(e); }
     setLoading(false);
   };
   useEffect(() => { load(); }, []);
@@ -1017,6 +1056,15 @@ function PendingApprovalsPanel({ pin }) {
     } catch (e) { setMsg(e.message); }
   };
 
+  const respondCake = async (id, accept) => {
+    try {
+      await supaRpc("respond_cake_entry", { p_entry_id: id, p_pin: pin, p_accept: accept });
+      load();
+    } catch (e) { setMsg(e.message); }
+  };
+
+  const totalCount = rows.length + cakeRows.length;
+
   return (
     <div className="rounded-2xl p-5" style={{ background: CARD }}>
       <h2 className="jh-font-display text-sm font-bold flex items-center gap-1.5 mb-3" style={{ color: NAVY }}>
@@ -1024,7 +1072,7 @@ function PendingApprovalsPanel({ pin }) {
       </h2>
       {msg && <div className="text-sm mb-3" style={{ color: DANGER }}>{msg}</div>}
       {loading ? <div className="text-sm" style={{ color: MUTED }}>{t.loading}</div>
-        : rows.length === 0 ? <div className="text-sm" style={{ color: MUTED }}>{t.noPending}</div>
+        : totalCount === 0 ? <div className="text-sm" style={{ color: MUTED }}>{t.noPending}</div>
         : (
           <div className="flex flex-col gap-3">
             {rows.map((m) => (
@@ -1034,6 +1082,16 @@ function PendingApprovalsPanel({ pin }) {
                 <div className="flex gap-2">
                   <button onClick={() => respond(m.id, true)} className="jh-btn flex-1 rounded-lg py-2 text-xs font-bold" style={{ background: "#E4F2EA", color: SUCCESS }}>{t.accept}</button>
                   <button onClick={() => respond(m.id, false)} className="jh-btn flex-1 rounded-lg py-2 text-xs font-bold" style={{ background: "#FBE7E4", color: DANGER }}>{t.reject}</button>
+                </div>
+              </div>
+            ))}
+            {cakeRows.map((m) => (
+              <div key={m.id} className="rounded-xl p-3.5" style={{ background: BG }}>
+                <div className="text-xs font-semibold mb-1 flex items-center gap-1" style={{ color: MUTED }}><Cake size={12} /> {m.entry_type} · {t.qty}: {fmt(m.quantity)}</div>
+                <div className="text-xs mb-3" style={{ color: MUTED }}>{m.created_at?.slice(0, 10)}</div>
+                <div className="flex gap-2">
+                  <button onClick={() => respondCake(m.id, true)} className="jh-btn flex-1 rounded-lg py-2 text-xs font-bold" style={{ background: "#E4F2EA", color: SUCCESS }}>{t.accept}</button>
+                  <button onClick={() => respondCake(m.id, false)} className="jh-btn flex-1 rounded-lg py-2 text-xs font-bold" style={{ background: "#FBE7E4", color: DANGER }}>{t.reject}</button>
                 </div>
               </div>
             ))}
