@@ -5,6 +5,7 @@ import {
   Lock, ChevronRight, Package, PackageX, AlertTriangle, Plus, Trash2,
   CalendarClock, ClipboardList, LayoutGrid, Download, Printer, Cake, Copy,
   Check, Banknote, Phone, Building2, Mail, KeyRound, Bell, Users, RotateCcw,
+  Menu, X, ArrowLeftRight, Settings2,
 } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from "recharts";
 
@@ -73,6 +74,24 @@ async function authSignIn(email, password) {
 
 // Upload a photo to Supabase Storage. Path convention: {companyId}/{pin}/{filename}
 // This matches the PIN-based upload RLS policy (no auth.uid() available for PIN users).
+// Translate text to the other two languages using the free MyMemory API.
+// Best-effort: if it fails or is offline, falls back to the original text.
+async function translateName(text, sourceLang) {
+  const langs = { bn: "bn", en: "en", ar: "ar" };
+  const targets = Object.keys(langs).filter((l) => l !== sourceLang);
+  const result = { bn: text, en: text, ar: text };
+  result[sourceLang] = text;
+  for (const target of targets) {
+    try {
+      const res = await fetch(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=${sourceLang}|${target}`);
+      const data = await res.json();
+      const translated = data?.responseData?.translatedText;
+      if (translated && !translated.toLowerCase().includes("invalid")) result[target] = translated;
+    } catch (e) { /* keep original as fallback */ }
+  }
+  return result;
+}
+
 async function uploadPhoto(bucket, companyId, pin, file) {
   if (!file) return null;
   const ext = file.name.split(".").pop() || "jpg";
@@ -209,6 +228,12 @@ const STR = {
     expired: "মেয়াদ শেষ", expiringSoon: "মেয়াদ শীঘ্রই শেষ হবে", safe: "নিরাপদ",
     notEnoughStock: "পর্যাপ্ত স্টক নেই", outOfStock: "স্টক নেই", searchProduct: "পণ্যের নাম লিখে খুঁজুন",
     available: "মজুদ আছে", retToSupplier: "সাপ্লায়ারকে ফেরত (Return)",
+    menuTitle: "Menu", menuStoreGodown: "Store / Godown", menuTransfer: "Transfer (অন্য জায়গায় পাঠানো)",
+    menuReturn: "Return (ফেরত)", menuWastage: "Wastage (নষ্ট)", menuUsers: "Users",
+    menuSettings: "Settings", menuSupport: "সমস্যা হলে যোগাযোগ করুন",
+    addLocation: "নতুন Store/Godown যোগ করুন", locationName: "নাম", locationType: "ধরন", locationPin: "PIN",
+    noLocations: "কোনো Store/Godown নেই", noMovements: "কোনো এন্ট্রি নেই", value: "মূল্য",
+    noUsers: "কোনো ইউজার নেই", changeRole: "Role পরিবর্তন", settingsComingSoon: "আরও সেটিংস শীঘ্রই আসছে",
   },
   en: {
     appName: "J H Management", tagline: "Multi-business Management Platform",
@@ -642,15 +667,7 @@ function SalesEntryPanel({ pin }) {
 
 /* ---------------------------- Inventory Panel ------------------------------- */
 function InventoryPanel({ pin, locationId, companyId, isStore }) {
-  const { t } = useLang();
-  const [stock, setStock] = useState([]);
-  const [products, setProducts] = useState([]);
-  const [locations, setLocations] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [msg, setMsg] = useState("");
-  const [newProductName, setNewProductName] = useState("");
-  const [newProductUnit, setNewProductUnit] = useState("pcs");
-  const [productSearchText, setProductSearchText] = useState("");
+  const { t, lang } = useLang();
   const blank = { productId: "", quantity: "", totalCost: "", movementType: isStore ? "sale" : "purchase", toLocationId: "", expiryDate: "", supplier: "", purchaseDate: todayISO() };
   const [form, setForm] = useState(blank);
   const [productPhotoFile, setProductPhotoFile] = useState(null);
@@ -670,13 +687,20 @@ function InventoryPanel({ pin, locationId, companyId, isStore }) {
     setLoading(false);
   };
   useEffect(() => { load(); }, []);
+  useEffect(() => {
+    if (form.productId) {
+      const p = products.find((x) => x.id === form.productId);
+      if (p) setProductSearchText(p[`name_${lang}`] || p.name);
+    }
+  }, [lang, products]);
 
   const addNewProduct = async () => {
     if (!newProductName.trim()) return;
     setMsg("");
     try {
       const trimmedName = newProductName.trim();
-      const id = await supaRpc("ensure_product", { p_pin: pin, p_name: trimmedName, p_unit: newProductUnit });
+      const names = await translateName(trimmedName, lang);
+      const id = await supaRpc("ensure_product", { p_pin: pin, p_name: trimmedName, p_unit: newProductUnit, p_name_bn: names.bn, p_name_en: names.en, p_name_ar: names.ar });
       setNewProductName("");
       await load();
       setForm((f) => ({ ...f, productId: id }));
@@ -742,7 +766,7 @@ function InventoryPanel({ pin, locationId, companyId, isStore }) {
             <div className="flex flex-col gap-2">
               {stock.map((s) => (
                 <div key={s.product_id} className="rounded-lg px-3 py-2 flex items-center justify-between" style={{ background: BG }}>
-                  <div className="jh-font-display text-sm font-bold" style={{ color: NAVY }}>{s.product_name}</div>
+                  <div className="jh-font-display text-sm font-bold" style={{ color: NAVY }}>{s[`name_${lang}`] || s.product_name}</div>
                   <div className="text-xs font-semibold" style={{ color: s.quantity <= 0 ? DANGER : MUTED }}>
                     {s.quantity <= 0 ? t.outOfStock : `${fmt(s.quantity)} ${s.unit}`}
                   </div>
@@ -777,11 +801,11 @@ function InventoryPanel({ pin, locationId, companyId, isStore }) {
               onChange={(e) => {
                 const val = e.target.value;
                 setProductSearchText(val);
-                const match = products.find((p) => p.name === val);
+                const match = products.find((p) => (p[`name_${lang}`] || p.name) === val);
                 setForm((f) => ({ ...f, productId: match ? match.id : "" }));
               }} />
             <datalist id="product-list-inv">
-              {products.map((p) => <option key={p.id} value={p.name} />)}
+              {products.map((p) => <option key={p.id} value={p[`name_${lang}`] || p.name} />)}
             </datalist>
           </Field>
         </div>
@@ -1111,6 +1135,7 @@ function PendingApprovalsPanel({ pin }) {
 function AdminScreen({ session, onLogout }) {
   const { t, lang } = useLang();
   const [tab, setTab] = useState("dashboard");
+  const [menuOpen, setMenuOpen] = useState(false);
   const isSuperAdmin = session.profile?.role === "super_admin";
   const [companies, setCompanies] = useState([]);
   const [activeCompanyId, setActiveCompanyId] = useState(session.profile?.company_id || null);
@@ -1121,11 +1146,30 @@ function AdminScreen({ session, onLogout }) {
     }
   }, [isSuperAdmin]);
 
+  const companyId = isSuperAdmin ? activeCompanyId : session.profile?.company_id;
+
+  const menuItems = [
+    { key: "dashboard", icon: LayoutGrid, label: t.tabDashboard },
+    { key: "locations", icon: Building2, label: t.menuStoreGodown },
+    { key: "transfer", icon: ArrowLeftRight, label: t.menuTransfer },
+    { key: "return", icon: RotateCcw, label: t.menuReturn },
+    { key: "wastage", icon: AlertTriangle, label: t.menuWastage },
+    { key: "cake", icon: Cake, label: t.cakeReport },
+    { key: "stockreport", icon: ClipboardList, label: t.stockReport },
+    { key: "payment", icon: Banknote, label: t.tabPayment },
+    { key: "notices", icon: Bell, label: t.tabNotices },
+    { key: "users", icon: Users, label: t.menuUsers },
+    { key: "settings", icon: Settings2, label: t.menuSettings },
+  ];
+
   return (
     <div className="min-h-screen jh-font-body" dir={lang === "ar" ? "rtl" : "ltr"} style={{ background: BG }}>
       <GlobalStyle />
       <div className="sticky top-0 z-10 px-5 py-4 flex items-center justify-between" style={{ background: NAVY }}>
         <div className="flex items-center gap-2.5">
+          <button onClick={() => setMenuOpen(true)} className="jh-btn p-1.5 rounded-lg" style={{ color: "white", background: "rgba(255,255,255,0.12)" }}>
+            <Menu size={18} />
+          </button>
           <LogoBadge size={36} />
           <div>
             <div className="jh-font-display text-white text-base font-bold leading-tight">{t.tabDashboard}</div>
@@ -1140,6 +1184,34 @@ function AdminScreen({ session, onLogout }) {
         </div>
       </div>
 
+      {menuOpen && (
+        <div className="fixed inset-0 z-30" style={{ background: "rgba(0,0,0,0.4)" }} onClick={() => setMenuOpen(false)}>
+          <div className="h-full w-full max-w-sm bg-white overflow-y-auto" onClick={(e) => e.stopPropagation()} style={{ [lang === "ar" ? "marginLeft" : "marginRight"]: "auto" }}>
+            <div className="px-5 py-4 flex items-center justify-between" style={{ background: NAVY }}>
+              <div className="flex items-center gap-2.5">
+                <LogoBadge size={34} />
+                <div className="jh-font-display text-white text-base font-bold">{t.menuTitle}</div>
+              </div>
+              <button onClick={() => setMenuOpen(false)} className="text-white p-1"><X size={20} /></button>
+            </div>
+            <div className="flex flex-col">
+              {menuItems.map((item) => (
+                <button key={item.key} onClick={() => { setTab(item.key); setMenuOpen(false); }}
+                  className="jh-btn jh-font-body flex items-center gap-3 px-5 py-4 text-sm font-semibold text-left border-b"
+                  style={{ borderColor: "#EFF1F5", background: tab === item.key ? "#FBF3DE" : "white", color: NAVY }}>
+                  <item.icon size={18} /> {item.label}
+                </button>
+              ))}
+              <a href="https://wa.me/8801880176772" target="_blank" rel="noreferrer"
+                className="jh-btn jh-font-body flex items-center gap-3 px-5 py-4 text-sm font-semibold text-left border-b"
+                style={{ borderColor: "#EFF1F5", background: "#FBF3DE", color: NAVY }}>
+                📞 {t.menuSupport}
+              </a>
+            </div>
+          </div>
+        </div>
+      )}
+
       {isSuperAdmin && (
         <div className="px-4 pt-4 max-w-4xl mx-auto">
           <select className="jh-input jh-font-body w-full rounded-lg border px-3 py-2 text-sm" style={{ borderColor: "#D9DCE3", background: CARD }}
@@ -1150,19 +1222,18 @@ function AdminScreen({ session, onLogout }) {
         </div>
       )}
 
-      <div className="flex gap-2 px-4 pt-4 max-w-4xl mx-auto flex-wrap">
-        <button onClick={() => setTab("dashboard")} className="jh-btn text-xs px-3.5 py-2 rounded-full font-semibold flex items-center gap-1.5"
-          style={{ background: tab === "dashboard" ? NAVY_SOFT : CARD, color: tab === "dashboard" ? "white" : NAVY }}><LayoutGrid size={13} /> {t.tabDashboard}</button>
-        <button onClick={() => setTab("payment")} className="jh-btn text-xs px-3.5 py-2 rounded-full font-semibold flex items-center gap-1.5"
-          style={{ background: tab === "payment" ? NAVY_SOFT : CARD, color: tab === "payment" ? "white" : NAVY }}><Banknote size={13} /> {t.tabPayment}</button>
-        <button onClick={() => setTab("notices")} className="jh-btn text-xs px-3.5 py-2 rounded-full font-semibold flex items-center gap-1.5"
-          style={{ background: tab === "notices" ? NAVY_SOFT : CARD, color: tab === "notices" ? "white" : NAVY }}><Bell size={13} /> {t.tabNotices}</button>
-      </div>
-
       <div className="max-w-4xl mx-auto p-4 pb-20">
-        {tab === "dashboard" && <AdminDashboardTab session={session} companyId={isSuperAdmin ? activeCompanyId : session.profile?.company_id} isSuperAdmin={isSuperAdmin} />}
-        {tab === "payment" && <SubscriptionTab session={session} companyId={session.profile?.company_id} />}
+        {tab === "dashboard" && <AdminDashboardTab session={session} companyId={companyId} isSuperAdmin={isSuperAdmin} />}
+        {tab === "locations" && <LocationsTab session={session} companyId={companyId} />}
+        {tab === "transfer" && <MovementListTab session={session} companyId={companyId} movementType="transfer" />}
+        {tab === "return" && <MovementListTab session={session} companyId={companyId} movementType="return" />}
+        {tab === "wastage" && <MovementListTab session={session} companyId={companyId} movementType="wastage" />}
+        {tab === "cake" && <CakeReportTab session={session} companyId={companyId} />}
+        {tab === "stockreport" && <StockReportTab session={session} companyId={companyId} />}
+        {tab === "payment" && <SubscriptionTab session={session} companyId={companyId} />}
         {tab === "notices" && <NoticesTab session={session} isSuperAdmin={isSuperAdmin} />}
+        {tab === "users" && <UsersTab session={session} />}
+        {tab === "settings" && <SettingsTab session={session} />}
       </div>
     </div>
   );
