@@ -71,6 +71,28 @@ async function authSignIn(email, password) {
   return data; // { access_token, user, ... }
 }
 
+// Upload a photo to Supabase Storage. Path convention: {companyId}/{pin}/{filename}
+// This matches the PIN-based upload RLS policy (no auth.uid() available for PIN users).
+async function uploadPhoto(bucket, companyId, pin, file) {
+  if (!file) return null;
+  const ext = file.name.split(".").pop() || "jpg";
+  const path = `${companyId}/${pin}/${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
+  const res = await fetch(`${SUPABASE_URL}/storage/v1/object/${bucket}/${path}`, {
+    method: "POST",
+    headers: {
+      apikey: SUPABASE_ANON_KEY,
+      Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+      "Content-Type": file.type || "application/octet-stream",
+    },
+    body: file,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.message || `Upload failed (${res.status})`);
+  }
+  return `${SUPABASE_URL}/storage/v1/object/public/${bucket}/${path}`;
+}
+
 /* ================================= THEME =================================== */
 const NAVY = "#16233F";
 const NAVY_SOFT = "#1F3864";
@@ -180,6 +202,11 @@ const STR = {
     allCompanies: "সব কোম্পানি (Super Admin)", stockReport: "স্টক রিপোর্ট", salesReport: "বিক্রয় রিপোর্ট",
     godownReport: "গোডাউনের হিসাব", cakeReport: "কেক হিসাব", totalValue: "মোট মূল্য",
     company: "কোম্পানি", store: "Store", godown: "Godown", role: "ভূমিকা",
+    supplier: "সাপ্লায়ার", purchaseDate: "কেনার তারিখ", productPhoto: "পণ্যের ছবি", cashMemo: "ক্যাশ মেমো/ইনভয়েস",
+    paymentWillBePending: "টাকা দেওয়া থাকলে পেমেন্ট Admin অনুমোদনের অপেক্ষায় থাকবে",
+    pendingPayments: "অপেক্ষারত পেমেন্ট", approve: "✅ অনুমোদন করুন", rejectPayment: "❌ বাতিল করুন",
+    noPendingPayments: "কোনো অপেক্ষারত পেমেন্ট নেই", amount: "টাকার পরিমাণ",
+    expired: "মেয়াদ শেষ", expiringSoon: "মেয়াদ শীঘ্রই শেষ হবে", safe: "নিরাপদ",
   },
   en: {
     appName: "J H Management", tagline: "Multi-business Management Platform",
@@ -214,6 +241,11 @@ const STR = {
     allCompanies: "All Companies (Super Admin)", stockReport: "Stock Report", salesReport: "Sales Report",
     godownReport: "Godown Report", cakeReport: "Cake Report", totalValue: "Total Value",
     company: "Company", store: "Store", godown: "Godown", role: "Role",
+    supplier: "Supplier", purchaseDate: "Purchase Date", productPhoto: "Product Photo", cashMemo: "Cash Memo / Invoice",
+    paymentWillBePending: "If amount is entered, payment will wait for admin approval",
+    pendingPayments: "Pending Payments", approve: "✅ Approve", rejectPayment: "❌ Reject",
+    noPendingPayments: "No pending payments", amount: "Amount",
+    expired: "Expired", expiringSoon: "Expiring Soon", safe: "Safe",
   },
   ar: {
     appName: "جي إتش للإدارة", tagline: "منصة إدارة الأعمال متعددة الشركات",
@@ -247,6 +279,11 @@ const STR = {
     allCompanies: "كل الشركات", stockReport: "تقرير المخزون", salesReport: "تقرير المبيعات",
     godownReport: "تقرير المستودع", cakeReport: "تقرير الكيك", totalValue: "القيمة الإجمالية",
     company: "الشركة", store: "متجر", godown: "مستودع", role: "الدور",
+    supplier: "المورّد", purchaseDate: "تاريخ الشراء", productPhoto: "صورة المنتج", cashMemo: "الفاتورة",
+    paymentWillBePending: "إذا تم إدخال مبلغ، سينتظر الدفع موافقة المشرف",
+    pendingPayments: "المدفوعات المعلقة", approve: "✅ موافقة", rejectPayment: "❌ رفض",
+    noPendingPayments: "لا توجد مدفوعات معلقة", amount: "المبلغ",
+    expired: "منتهي الصلاحية", expiringSoon: "قريب الانتهاء", safe: "آمن",
   },
 };
 const LangContext = createContext(null);
@@ -458,7 +495,7 @@ function LocationScreen({ session, onLogout }) {
 
       <div className="max-w-2xl mx-auto p-4 pb-20">
         {tab === "entry" && isStore && <SalesEntryPanel pin={session.pin} />}
-        {tab === "inventory" && <InventoryPanel pin={session.pin} locationId={session.location_id} isStore={isStore} />}
+        {tab === "inventory" && <InventoryPanel pin={session.pin} locationId={session.location_id} companyId={session.company_id} isStore={isStore} />}
         {tab === "pending" && <PendingApprovalsPanel pin={session.pin} />}
       </div>
     </div>
@@ -577,7 +614,7 @@ function SalesEntryPanel({ pin }) {
 }
 
 /* ---------------------------- Inventory Panel ------------------------------- */
-function InventoryPanel({ pin, locationId, isStore }) {
+function InventoryPanel({ pin, locationId, companyId, isStore }) {
   const { t } = useLang();
   const [stock, setStock] = useState([]);
   const [products, setProducts] = useState([]);
@@ -585,8 +622,11 @@ function InventoryPanel({ pin, locationId, isStore }) {
   const [msg, setMsg] = useState("");
   const [newProductName, setNewProductName] = useState("");
   const [newProductUnit, setNewProductUnit] = useState("pcs");
-  const blank = { productId: "", quantity: "", totalCost: "", movementType: isStore ? "sale" : "purchase", toLocationPin: "", expiryDate: "" };
+  const blank = { productId: "", quantity: "", totalCost: "", movementType: isStore ? "sale" : "purchase", toLocationPin: "", expiryDate: "", supplier: "", purchaseDate: todayISO() };
   const [form, setForm] = useState(blank);
+  const [productPhotoFile, setProductPhotoFile] = useState(null);
+  const [cashMemoFile, setCashMemoFile] = useState(null);
+  const [uploading, setUploading] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -612,18 +652,29 @@ function InventoryPanel({ pin, locationId, isStore }) {
     } catch (e) { setMsg(`${t.savedFail} ${e.message}`); }
   };
 
+  const isPurchase = form.movementType === "purchase";
+
   const submit = async () => {
     setMsg("");
     if (!form.productId) { setMsg(t.productName); return; }
     if (num(form.quantity) <= 0) { setMsg(t.quantity); return; }
+    setUploading(true);
     try {
       const needsTarget = form.movementType === "transfer" || form.movementType === "ret";
       let toLoc = null;
       if (needsTarget) {
         const rows = await supaRpc("verify_location_pin", { p_pin: form.toLocationPin });
-        if (!rows || rows.length === 0) { setMsg(t.wrongPin); return; }
+        if (!rows || rows.length === 0) { setMsg(t.wrongPin); setUploading(false); return; }
         toLoc = rows[0].location_id;
       }
+
+      let productPhotoUrl = null;
+      let cashMemoUrl = null;
+      if (isPurchase) {
+        if (productPhotoFile) productPhotoUrl = await uploadPhoto("product-photos", companyId, pin, productPhotoFile);
+        if (cashMemoFile) cashMemoUrl = await uploadPhoto("invoice-photos", companyId, pin, cashMemoFile);
+      }
+
       await supaRpc("submit_stock_movement", {
         p_pin: pin,
         p_from_location: locationId,
@@ -633,11 +684,18 @@ function InventoryPanel({ pin, locationId, isStore }) {
         p_total_cost: num(form.totalCost),
         p_expiry_date: form.expiryDate || null,
         p_movement_type: form.movementType === "ret" ? "return" : form.movementType,
+        p_receipt_url: cashMemoUrl,
+        p_supplier: isPurchase ? (form.supplier || null) : null,
+        p_purchase_date: isPurchase ? (form.purchaseDate || null) : null,
+        p_product_photo_url: productPhotoUrl,
       });
       setMsg(t.savedOk);
       setForm(blank);
+      setProductPhotoFile(null);
+      setCashMemoFile(null);
       load();
     } catch (e) { setMsg(`${t.savedFail} ${e.message}`); }
+    setUploading(false);
     setTimeout(() => setMsg(""), 6000);
   };
 
@@ -709,16 +767,37 @@ function InventoryPanel({ pin, locationId, isStore }) {
           </Field>
           <Field label={t.quantity}><NumInput value={form.quantity} onChange={(v) => setForm((f) => ({ ...f, quantity: v }))} /></Field>
         </div>
-        {!isStore && form.movementType === "purchase" && (
-          <div className="mb-3"><Field label={t.costTotal}><NumInput value={form.totalCost} onChange={(v) => setForm((f) => ({ ...f, totalCost: v }))} /></Field></div>
+        {!isStore && isPurchase && (
+          <>
+            <div className="grid grid-cols-2 gap-3 mb-3">
+              <Field label={t.costTotal}><NumInput value={form.totalCost} onChange={(v) => setForm((f) => ({ ...f, totalCost: v }))} /></Field>
+              <Field label={t.supplier}><TextInput value={form.supplier} onChange={(e) => setForm((f) => ({ ...f, supplier: e.target.value }))} /></Field>
+            </div>
+            <div className="mb-3"><Field icon={CalendarClock} label={t.purchaseDate}><TextInput type="date" value={form.purchaseDate} onChange={(e) => setForm((f) => ({ ...f, purchaseDate: e.target.value }))} /></Field></div>
+            <div className="grid grid-cols-2 gap-3 mb-3">
+              <Field icon={Camera} label={t.productPhoto}>
+                <input type="file" accept="image/*" capture="environment" className="jh-input jh-font-body w-full rounded-lg border px-2 py-2 text-xs" style={{ borderColor: "#D9DCE3" }}
+                  onChange={(e) => setProductPhotoFile(e.target.files?.[0] || null)} />
+              </Field>
+              <Field icon={Receipt} label={t.cashMemo}>
+                <input type="file" accept="image/*" capture="environment" className="jh-input jh-font-body w-full rounded-lg border px-2 py-2 text-xs" style={{ borderColor: "#D9DCE3" }}
+                  onChange={(e) => setCashMemoFile(e.target.files?.[0] || null)} />
+              </Field>
+            </div>
+            {num(form.totalCost) > 0 && (
+              <div className="flex items-center gap-1.5 mb-3 text-xs font-semibold" style={{ color: WARNING }}>
+                <AlertTriangle size={13} /> {t.paymentWillBePending}
+              </div>
+            )}
+          </>
         )}
         {(form.movementType === "transfer" || form.movementType === "ret") && (
           <div className="mb-3"><Field icon={KeyRound} label={t.toLocation}><TextInput value={form.toLocationPin} onChange={(e) => setForm((f) => ({ ...f, toLocationPin: e.target.value }))} placeholder="PIN" /></Field></div>
         )}
         <div className="mb-3"><Field icon={CalendarClock} label={t.expiryDate}><TextInput type="date" value={form.expiryDate} onChange={(e) => setForm((f) => ({ ...f, expiryDate: e.target.value }))} /></Field></div>
         {msg && <div className="text-sm font-medium mb-3" style={{ color: msg.startsWith("✅") ? SUCCESS : DANGER }}>{msg}</div>}
-        <button onClick={submit} className="jh-btn jh-font-body w-full rounded-lg py-2.5 text-sm font-bold text-white flex items-center justify-center gap-1.5" style={{ background: NAVY_SOFT }}>
-          <Plus size={15} /> {t.addProduct}
+        <button onClick={submit} disabled={uploading} className="jh-btn jh-font-body w-full rounded-lg py-2.5 text-sm font-bold text-white flex items-center justify-center gap-1.5" style={{ background: NAVY_SOFT, opacity: uploading ? 0.7 : 1 }}>
+          <Plus size={15} /> {uploading ? t.saving : t.addProduct}
         </button>
       </div>
     </div>
